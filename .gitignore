@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Misc User Folders
+exploration/
+
 # Virtual environments
 .venv/
 venv/
@@ -31,3 +34,6 @@ Thumbs.db
 # Generated PDF outputs
 _processed/
 _processed_*/
+
+# Inputs
+_unprocessed
