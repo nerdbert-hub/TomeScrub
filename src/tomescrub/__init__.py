@@ -18,6 +18,8 @@ from .processor import (
     DocumentProcessingResult,
     PDFCleaner,
     PasswordAuthenticationError,
+    ProcessingEvent,
+    RunStatistics,
 )
 from .sanitizer import (
     clear_document_metadata,
@@ -36,6 +38,8 @@ __all__ = [
     "PDFCleaner",
     "DocumentProcessingResult",
     "PasswordAuthenticationError",
+    "RunStatistics",
+    "ProcessingEvent",
     "PasswordProvider",
     "WatermarkRule",
     "DEFAULT_WATERMARK_RULES",

@@ -101,6 +101,17 @@ def test_process_path_mirrors_structure_and_reads_text(tmp_path: Path) -> None:
     assert result.hidden_text_removed == 0
     assert result.image_metadata_cleared >= 0
     assert result.document_metadata_cleared is True
+    assert result.page_count == 1
+    assert result.elapsed >= 0
+    assert "total" in result.step_timings
+    assert result.changed is True
+
+    stats = cleaner.last_run_stats
+    assert stats is not None
+    assert stats.processed == 1
+    assert stats.copied == 1
+    assert stats.skipped == 0
+    assert stats.total_pages == 1
 
 
 def test_process_single_file_defaults_to_parent_root(tmp_path: Path) -> None:
@@ -119,6 +130,10 @@ def test_process_single_file_defaults_to_parent_root(tmp_path: Path) -> None:
     assert results[0].watermarks_removed == 0
     assert results[0].hidden_text_removed == 0
     assert results[0].document_metadata_cleared is True
+    assert results[0].page_count == 1
+    assert results[0].elapsed >= 0
+    assert "total" in results[0].step_timings
+    assert results[0].changed is True
 
 
 def test_skip_existing_outputs(tmp_path: Path) -> None:
@@ -136,6 +151,11 @@ def test_skip_existing_outputs(tmp_path: Path) -> None:
 
     assert results == []
     assert (output_root / "doc.pdf").exists()
+    stats = cleaner_skip.last_run_stats
+    assert stats is not None
+    assert stats.processed == 0
+    assert stats.skipped == 1
+    assert stats.failed == 0
 
 
 def test_encrypted_pdf_requires_password(tmp_path: Path) -> None:
@@ -168,6 +188,10 @@ def test_encrypted_pdf_with_default_password(tmp_path: Path) -> None:
     assert result.watermarks_removed == 0
     assert result.hidden_text_removed == 0
     assert result.document_metadata_cleared is True
+    assert result.page_count == 1
+    assert result.elapsed >= 0
+    assert "total" in result.step_timings
+    assert result.changed is True
 
 
 def test_encrypted_pdf_with_hint_file(tmp_path: Path) -> None:
@@ -193,6 +217,10 @@ def test_encrypted_pdf_with_hint_file(tmp_path: Path) -> None:
     assert result.watermarks_removed == 0
     assert result.hidden_text_removed == 0
     assert result.document_metadata_cleared is True
+    assert result.page_count == 1
+    assert result.elapsed >= 0
+    assert "total" in result.step_timings
+    assert result.changed is True
 
 
 def test_watermark_patterns_are_removed(tmp_path: Path) -> None:
@@ -211,6 +239,10 @@ def test_watermark_patterns_are_removed(tmp_path: Path) -> None:
 
     assert result.watermarks_removed == len(watermarks)
     assert result.hidden_text_removed == 0
+    assert result.page_count == 1
+    assert result.elapsed >= 0
+    assert "total" in result.step_timings
+    assert result.changed is True
     with fitz.open(result.output) as cleaned:
         for page in cleaned:
             text = page.get_text()
@@ -235,6 +267,10 @@ def test_watermark_font_mismatch(tmp_path: Path) -> None:
     result = next(cleaner.process_path(source_root))
 
     assert result.watermarks_removed == 0
+    assert result.page_count == 1
+    assert result.elapsed >= 0
+    assert "total" in result.step_timings
+    assert result.changed is True
     with fitz.open(result.output) as cleaned:
         text = cleaned[0].get_text()
         assert "Downloaded by Different Font" in text
@@ -277,6 +313,10 @@ def test_hidden_text_and_metadata_sanitised(tmp_path: Path) -> None:
     assert result.hidden_text_removed > 0
     assert result.document_metadata_cleared is True
     assert result.image_metadata_cleared == 1
+    assert result.page_count == 1
+    assert result.elapsed >= 0
+    assert "total" in result.step_timings
+    assert result.changed is True
 
     with fitz.open(result.output) as cleaned:
         page = cleaned[0]
@@ -288,3 +328,37 @@ def test_hidden_text_and_metadata_sanitised(tmp_path: Path) -> None:
             assert cleaned.get_xml_metadata() in ("", None)
         image_xref = page.get_images(full=True)[0][0]
         assert cleaned.xref_get_key(image_xref, "Metadata")[0] == "null"
+
+
+def test_resource_fork_pdf_is_skipped(tmp_path: Path) -> None:
+    """macOS resource fork artefacts should be ignored gracefully."""
+    source_root = tmp_path / "_unprocessed"
+    resource_pdf = source_root / "__MACOSX" / "._dummy.pdf"
+    resource_pdf.parent.mkdir(parents=True, exist_ok=True)
+    resource_pdf.write_bytes(b"")
+
+    cleaner = PDFCleaner(output_dir=tmp_path / "_processed")
+    results = list(cleaner.process_path(source_root))
+
+    assert results == []
+    stats = cleaner.last_run_stats
+    assert stats is not None
+    assert stats.processed == 0
+    assert stats.skipped == 1
+    assert stats.failed == 0
+
+
+def test_corrupt_pdf_registers_failure(tmp_path: Path) -> None:
+    """Unreadable PDFs should be reported without aborting the run."""
+    pdf_path = tmp_path / "broken.pdf"
+    pdf_path.write_text("not a real pdf", encoding="utf-8")
+
+    cleaner = PDFCleaner(output_dir=tmp_path / "_processed")
+    results = list(cleaner.process_path(pdf_path))
+
+    assert results == []
+    stats = cleaner.last_run_stats
+    assert stats is not None
+    assert stats.failed == 1
+    assert stats.processed == 0
+    assert stats.failures[0][0] == pdf_path

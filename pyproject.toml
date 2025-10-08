@@ -15,6 +15,7 @@ dependencies = [
     "pymupdf>=1.24.0",
     "pydantic>=2.7",
     "platformdirs>=4.2",
+    "rich>=13.7",
 ]
 
 [project.optional-dependencies]
