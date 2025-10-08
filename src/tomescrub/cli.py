@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Optional, Sequence
 
+from .config import load_config
 from .passwords import PasswordProvider, load_password_file
 from .processor import PDFCleaner
 
@@ -21,41 +22,95 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a PDF or directory containing PDFs to clean.",
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to a configuration file (default discovery order described in README).",
+    )
+    parser.add_argument(
+        "--set",
+        dest="overrides",
+        action="append",
+        default=[],
+        metavar="path=value",
+        help="Override configuration values (e.g. --set clean.sanitize_metadata=false).",
+    )
+    parser.add_argument(
         "-o",
         "--output-dir",
         type=Path,
-        default=Path("_processed"),
-        help="Directory where processed files will be stored (default: ./_processed).",
+        help="Override the configured output directory (io.output_dir).",
     )
     parser.add_argument(
         "--keep-metadata",
-        action="store_true",
-        help="Retain original metadata instead of stripping it.",
+        dest="keep_metadata",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Retain original metadata instead of stripping it (toggles clean.sanitize_metadata).",
     )
     parser.add_argument(
         "--skip-existing",
-        action="store_true",
-        help="Skip PDFs when the target file already exists.",
+        dest="skip_existing",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Skip PDFs when the target file already exists (toggles io.overwrite_existing).",
     )
     parser.add_argument(
         "--password",
         type=str,
-        default=None,
         help="Default password applied to encrypted PDFs when no specific match is found.",
     )
     parser.add_argument(
         "--password-file",
         type=Path,
-        default=None,
         help="File containing PDF-specific passwords (format: name=password).",
     )
     parser.add_argument(
         "--password-hints",
         type=str,
-        default="passwords.txt",
-        help="Filename searched within each directory for PDF passwords (default: passwords.txt).",
+        help="Filename searched within each directory for PDF passwords (passwords.hint_filename).",
+    )
+    parser.add_argument(
+        "--no-password-hints",
+        dest="disable_password_hints",
+        action="store_true",
+        help="Disable per-directory password hint lookups.",
     )
     return parser
+
+
+def _bool_to_scalar(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _collect_overrides(args: argparse.Namespace) -> list[str]:
+    overrides: list[str] = list(args.overrides or [])
+    if args.output_dir:
+        overrides.append(f"io.output_dir={args.output_dir}")
+    if args.keep_metadata is not None:
+        # keep_metadata True -> sanitize_metadata False
+        overrides.append(f"clean.sanitize_metadata={_bool_to_scalar(not args.keep_metadata)}")
+    if args.skip_existing is not None:
+        overrides.append(f"io.overwrite_existing={_bool_to_scalar(not args.skip_existing)}")
+    if args.password is not None:
+        overrides.append(f"passwords.default={args.password}")
+    if args.password_file is not None:
+        overrides.append(f"passwords.password_file={args.password_file}")
+    if args.disable_password_hints:
+        overrides.append("passwords.hint_filename=")
+    elif args.password_hints is not None:
+        overrides.append(f"passwords.hint_filename={args.password_hints}")
+    return overrides
+
+
+def _build_password_provider(config) -> PasswordProvider:
+    mapping = {}
+    if config.passwords.password_file:
+        mapping.update(load_password_file(config.passwords.password_file))
+    return PasswordProvider(
+        default=config.passwords.default,
+        global_mapping=mapping or None,
+        hint_filename=config.passwords.hint_filename,
+    )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -63,22 +118,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    password_hint_name = args.password_hints
-    if password_hint_name and password_hint_name.lower() in {"none", "null"}:
-        password_hint_name = None
+    overrides = _collect_overrides(args)
+    config = load_config(args.config, overrides)
 
-    password_provider = PasswordProvider(
-        default=args.password,
-        global_mapping=load_password_file(args.password_file) if args.password_file else None,
-        hint_filename=password_hint_name,
-    )
+    password_provider = _build_password_provider(config)
 
-    cleaner = PDFCleaner(
-        output_dir=args.output_dir,
-        sanitize_metadata=not args.keep_metadata,
-        overwrite=not args.skip_existing,
-        password_provider=password_provider,
-    )
+    cleaner = PDFCleaner.from_config(config, password_provider=password_provider)
     count = 0
     unlocked = 0
     removed_watermarks = 0
@@ -94,7 +139,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             docs_metadata_cleared += 1
         if result.was_encrypted:
             unlocked += 1
-    summary = f"Processed {count} PDF file(s) into {args.output_dir.resolve()}."
+    summary = f"Processed {count} PDF file(s) into {cleaner.output_dir.resolve()}."
     if unlocked:
         summary += f" Unlocked {unlocked} encrypted file(s)."
     if removed_watermarks:

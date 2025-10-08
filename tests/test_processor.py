@@ -25,7 +25,13 @@ def _create_pdf(path: Path, text: str) -> None:
     document.close()
 
 
-def _create_pdf_with_watermarks(path: Path, body_text: str, watermarks: list[str]) -> None:
+def _create_pdf_with_watermarks(
+    path: Path,
+    body_text: str,
+    watermarks: list[str],
+    *,
+    watermark_font: str = "helv",
+) -> None:
     """Create a PDF with body text and watermark lines near the bottom."""
     path.parent.mkdir(parents=True, exist_ok=True)
     document = fitz.open()
@@ -36,7 +42,7 @@ def _create_pdf_with_watermarks(path: Path, body_text: str, watermarks: list[str
         page.insert_text(
             (36, y),
             watermark,
-            fontname="helv",
+            fontname=watermark_font,
             fontsize=8,
         )
     document.save(path)
@@ -210,6 +216,28 @@ def test_watermark_patterns_are_removed(tmp_path: Path) -> None:
             text = page.get_text()
             assert "Downloaded by" not in text
             assert "Order #" not in text
+
+
+def test_watermark_font_mismatch(tmp_path: Path) -> None:
+    """Watermark rules should ignore lines that use unexpected fonts."""
+    source_root = tmp_path / "_unprocessed"
+    pdf_path = source_root / "fonts.pdf"
+    watermarks = ["Downloaded by Different Font on 1/1/2024. Unauthorized distribution prohibited."]
+    _create_pdf_with_watermarks(
+        pdf_path,
+        "Body content remains",
+        watermarks,
+        watermark_font="courier",
+    )
+
+    output_root = tmp_path / "_processed"
+    cleaner = PDFCleaner(output_dir=output_root)
+    result = next(cleaner.process_path(source_root))
+
+    assert result.watermarks_removed == 0
+    with fitz.open(result.output) as cleaned:
+        text = cleaned[0].get_text()
+        assert "Downloaded by Different Font" in text
 
 
 def test_hidden_text_and_metadata_sanitised(tmp_path: Path) -> None:

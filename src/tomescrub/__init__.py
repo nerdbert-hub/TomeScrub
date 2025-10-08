@@ -1,6 +1,18 @@
 """TomeScrub package exposing high-level cleaning utilities."""
 
+from __future__ import annotations
+
+import warnings
+
+# Silence noisy PyMuPDF deprecation warnings stemming from upstream SWIG types.
+warnings.filterwarnings(
+    "ignore",
+    message=r"builtin type .* has no __module__ attribute",
+    category=DeprecationWarning,
+)
+
 from .cli import main as cli_main
+from .config import Config, load_config
 from .passwords import PasswordProvider, load_password_file
 from .processor import (
     DocumentProcessingResult,
@@ -19,6 +31,8 @@ from .watermarks import (
 )
 
 __all__ = [
+    "Config",
+    "load_config",
     "PDFCleaner",
     "DocumentProcessingResult",
     "PasswordAuthenticationError",

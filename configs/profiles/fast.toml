@@ -1,0 +1,21 @@
+[io]
+# When true (default) existing files are overwritten; set to false to keep prior runs untouched.
+overwrite_existing = true
+
+[clean]
+# Controls whether document metadata, image metadata, and hidden text are stripped.
+sanitize_metadata = false
+# Hidden text spans with opacity <= threshold are removed. Increase to catch semi-transparent overlays.
+hidden_text_alpha_threshold = 0
+
+[passwords]
+# Per-directory password hint filename. Blank or missing value disables hint lookups.
+hint_filename = "passwords.txt"
+
+[[watermarks.rules]]
+# Rule targeting per-order download notices near the footer.
+name = "order_reference"
+pattern = ".+\\(Order #\\d+\\)$"
+max_font_size = 16.0
+max_distance_from_bottom = 160.0
+fonts = ["helv", "helvetica", "helvetica-bold"]

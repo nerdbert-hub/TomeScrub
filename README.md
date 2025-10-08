@@ -6,7 +6,7 @@ Tooling scaffold for cleaning PDF documents with [PyMuPDF](https://pymupdf.readt
 - Package-first layout under `src/` for simple installation and reuse.
 - TomeScrub utilities encapsulating metadata stripping, text extraction, and saving workflow.
 - Password-aware processing that unlocks encrypted PDFs before saving unprotected copies and reports how many were unlocked per run.
-- Rule-based removal of page footer watermarks (e.g., `Downloaded by …` or `Name (Order #123)`) before writing the cleaned PDF.
+- Rule-based removal of page footer watermarks (e.g., `Downloaded by ...` or `Name (Order #123)`) before writing the cleaned PDF.
 - Automated sanitisation of document/image metadata and fully hidden text spans (keeps bookmarks, vector graphics, and visible content untouched).
 - Directory-aware processing that mirrors an input tree into a `_processed` output, copying non-PDF assets.
 - Streaming processor that avoids loading every result into memory; ideal for large collections.
@@ -32,6 +32,9 @@ The editable install registers `tomescrub` so you can invoke the CLI without adj
 ```bash
 python -m tomescrub path/to/file.pdf --output-dir _processed
 ```
+
+Need a detailed walkthrough? See `docs/USAGE.txt` for a step-by-step guide that covers
+environment setup, configuration layering, and extension tips.
 
 ### Mirror a directory structure
 
@@ -71,8 +74,13 @@ python -m pytest
 
 ## Project Layout
 
-```
+````
 TomeScrub/
+|-- configs/
+|   |-- example.toml
+|   `-- profiles/
+|       |-- fast.toml
+|       `-- strict.toml
 |-- README.md
 |-- requirements.txt
 |-- pyproject.toml
@@ -81,6 +89,11 @@ TomeScrub/
 |       |-- __init__.py
 |       |-- __main__.py
 |       |-- cli.py
+|       |-- config/
+|       |   |-- __init__.py
+|       |   |-- defaults.toml
+|       |   |-- loader.py
+|       |   `-- schema.py
 |       |-- passwords.py
 |       |-- processor.py
 |       |-- sanitizer.py
@@ -88,22 +101,56 @@ TomeScrub/
 `-- tests/
     |-- __init__.py
     `-- test_processor.py
-```
+````
+
+## Configuration
+- TomeScrub loads configuration with the following precedence (lowest -> highest): bundled defaults (`src/tomescrub/config/defaults.toml`), the first discovered config file (`--config`, `./tomescrub.toml`, or `%APPDATA%/tomescrub/config.toml`), environment variables prefixed with `TOMESCRUB__`, and finally explicit CLI overrides (`--set path=value` plus dedicated flags such as `--output-dir`).
+- All settings are defined in `src/tomescrub/config/schema.py` and exposed through the `Config` model. Load them in code via `tomescrub.load_config(path, overrides)`.
+- Example configuration (`configs/example.toml`):
+
+````
+[io]
+output_dir = "_processed"
+overwrite_existing = false
+
+[clean]
+sanitize_metadata = true
+hidden_text_alpha_threshold = 16
+
+[passwords]
+default = ""
+hint_filename = ""
+password_file = ""
+
+[[watermarks.rules]]
+name = "download_notice"
+pattern = "^Downloaded by\s+.+?\s+on\s+.+?\.\\s*Unauthorized distribution prohibited\.?$"
+ignore_case = true
+max_font_size = 14.0
+max_distance_from_bottom = 140.0
+fonts = ["helv", "helvetica", "helvetica-bold"]
+
+[[watermarks.rules]]
+name = "order_reference"
+pattern = ".+\(Order #\d+\)$"
+max_font_size = 14.0
+max_distance_from_bottom = 140.0
+fonts = ["helv", "helvetica", "helvetica-bold"]
+````
+
+- Override individual fields without editing files using environment variables such as `TOMESCRUB__IO__OUTPUT_DIR=build/_processed` or `TOMESCRUB__PASSWORDS__HINT_FILENAME=none`.
+- CLI overrides support both friendly switches (e.g. `--skip-existing`, `--no-password-hints`) and dotted assignments (`--set clean.sanitize_metadata=false`).
 
 ## Metadata & Hidden Text Sanitisation
 - Each PDF run through the cleaner has its Info/XMP metadata cleared and embedded image metadata stripped.
-- Text spans rendered with zero opacity (`alpha==0`) are removed automatically; this mirrors Acrobat's “Remove Hidden Information → Hidden Text”.
-- Bookmarks, annotations, vector artwork, and visible imagery remain intact. We intentionally skip Acrobat's “Deleted or cropped content” / “Overlapping objects” options to avoid bloat.
-- To tune hidden-text detection, adjust `remove_hidden_text` in `src/tomescrub/sanitizer.py` (e.g., raise `alpha_threshold` for semi-transparent layers).
+- Text spans rendered with zero opacity (`alpha==0`) are removed automatically; this mirrors Acrobat's "Remove Hidden Information -> Hidden Text".
+- Bookmarks, annotations, vector artwork, and visible imagery remain intact. We intentionally skip Acrobat's "Deleted or cropped content" / "Overlapping objects" options to avoid bloat.
+- To tune hidden-text detection globally, set `hidden_text_alpha_threshold` in your TomeScrub configuration or override `remove_hidden_text` directly for bespoke behaviour.
 
 ## Watermark Rules
-- Default patterns live in `src/tomescrub/watermarks.py` (`DEFAULT_WATERMARK_RULES`).
-- Each rule specifies a regex, optional font-size guardrails, and a distance-from-bottom threshold.
-- To add a new pattern:
-  1. Duplicate an existing `WatermarkRule` entry and adjust the regex (use `_normalize_text` behaviour as a guide—whitespace is collapsed).
-  2. Tune `max_distance_from_bottom` / font sizes if the watermark sits higher on the page or uses different styling.
-  3. Optionally write a regression test in `tests/test_processor.py` mirroring the new footer to guarantee it stays covered.
-  4. Run `python -m pytest` and `python -m tomescrub ...` to confirm the rule behaves as expected.
+- Declarative watermark patterns now live in configuration (`watermarks.rules` in TOML files) and are compiled at runtime.
+- Each rule still supports regex patterns, case sensitivity, font-size guardrails, and a distance-from-bottom threshold -- identical to the previous hard-coded structures.
+- To add or adjust a rule, edit your config and (optionally) add a matching regression test in `tests/test_processor.py`. Restart or reload your process to pick up the changes.
 
 ## Next Steps
 - Add content-aware cleaning features (redaction, annotation flattening, etc.).

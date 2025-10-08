@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional
 
-
 PasswordMap = Dict[str, str]
 
 
@@ -49,6 +48,8 @@ class PasswordProvider:
     ) -> None:
         self.default = default
         self.global_mapping = {k: v for k, v in (global_mapping or {}).items()}
+        if isinstance(hint_filename, str) and not hint_filename.strip():
+            hint_filename = None
         self.hint_filename = hint_filename
         self._hint_cache: Dict[Path, PasswordMap] = {}
 

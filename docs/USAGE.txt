@@ -1,0 +1,149 @@
+TomeScrub Usage Guide
+=====================
+
+This document walks through the end-to-end workflow for running TomeScrub, explains how the
+configuration system works, and highlights the most important classes and functions. It is
+intended as a “verbose mode” reference—feel free to skim for the sections you need.
+
+1. Environment Setup
+--------------------
+
+1.1 Create a virtual environment (optional but recommended):
+    > python -m venv .venv
+    > .\.venv\Scripts\activate
+
+1.2 Install dependencies and register TomeScrub in editable mode:
+    > pip install -r requirements.txt
+    > python -m pip install --user -e .
+
+1.3 Run the test suite to confirm everything is wired correctly:
+    > python -m pytest
+
+2. Preparing Input Files
+------------------------
+
+2.1 Place the PDFs you want to clean inside a working directory, for example:
+    TomeScrub/
+        _unprocessed/
+            Folder1/
+                file.pdf
+            passwords.txt
+
+2.2 Optional: drop a `passwords.txt` into any directory that contains encrypted PDFs.
+    Each line follows the form `filename.pdf = password`. Include a `* = password`
+    entry to provide a folder-wide default.
+
+3. Running the Cleaner
+----------------------
+
+3.1 Minimum command:
+    > python -m tomescrub _unprocessed
+
+    - `_unprocessed` is the source directory.
+    - Output files are written to `_processed` (default).
+    - Existing files will be overwritten unless you disable the option (see below).
+
+3.2 Add common CLI switches:
+    - `--output-dir OUTDIR`    → change the output mirror directory.
+    - `--keep-metadata`        → preserve document/image metadata.
+    - `--skip-existing`        → leave previously processed PDFs untouched.
+    - `--password SECRET`      → supply a global fallback password.
+    - `--password-file PATH`   → load a TOML-like password map (key=value per line).
+    - `--password-hints NAME`  → override the per-directory password hint filename.
+    - `--no-password-hints`    → disable directory hint discovery entirely.
+
+3.3 Configuration layering:
+    - TomeScrub merges settings from bundled defaults, config files, environment
+      variables, and CLI overrides.
+    - Provide an alternate configuration via `--config path/to/config.toml`.
+    - Override individual values with `--set clean.sanitize_metadata=false` style
+      assignments.
+    - Environment variables starting with `TOMESCRUB__` (double underscores) map to
+      nested settings, e.g.:
+         TOMESCRUB__IO__OUTPUT_DIR=custom_out
+         TOMESCRUB__PASSWORDS__HINT_FILENAME=none
+
+4. Understanding the Configuration Model
+----------------------------------------
+
+4.1 The `Config` Pydantic model (src/tomescrub/config/schema.py):
+    - `io`: output directory and overwrite policy.
+    - `clean`: metadata scrubbing and hidden text threshold.
+    - `passwords`: default password, hint filename, and optional mapping file.
+    - `watermarks.rules`: declarative watermark removal heuristics (regex, font sizing, optional font filters).
+
+4.2 Creating a configuration programmatically:
+    ```python
+    from tomescrub import load_config
+    config = load_config(None, ["io.output_dir=exports", "clean.sanitize_metadata=false"])
+    ```
+
+4.3 Using the config with the processor directly:
+    ```python
+    from tomescrub import PDFCleaner
+    cleaner = PDFCleaner.from_config(config)
+    cleaner.process_path(Path("_unprocessed"))
+    ```
+
+5. Core Components
+------------------
+
+5.1 `PDFCleaner` (src/tomescrub/processor.py):
+    - `process_path(source)` recursively mirrors folders, cleans PDFs, and copies
+      non-PDF assets.
+    - `clean_document(pdf_path)` performs the actual cleaning:
+          * Unlocks encrypted PDFs via the configured password provider.
+          * Removes watermarks using compiled rules.
+          * Clears metadata and hidden text based on configuration.
+          * Returns a `DocumentProcessingResult` with rich metadata.
+
+5.2 `PasswordProvider` (src/tomescrub/passwords.py):
+    - Resolves passwords using explicit mappings, per-directory hints, and a global
+      default.
+    - Customize by subclassing or providing a callable `password_resolver`.
+
+5.3 `WatermarkRule` & `remove_watermarks` (src/tomescrub/watermarks.py):
+    - Rules match textual footers via regex, font size constraints, and distance from
+      the page bottom.
+    - Extend by adding more entries to your configuration TOML.
+
+6. Interpreting Results
+-----------------------
+
+6.1 Console summary (from the CLI) reports:
+    - Total PDFs processed.
+    - Count of encrypted files unlocked.
+    - Number of watermark spans removed.
+    - Hidden text removals.
+    - How many documents and embedded images had metadata stripped.
+
+6.2 Programmatic results:
+    - Each `DocumentProcessingResult` contains fields like `output`, `text`,
+      `watermarks_removed`, and `document_metadata_cleared`. Ideal for instrumentation
+      or downstream automation.
+
+7. Troubleshooting & Tips
+-------------------------
+
+7.1 Password issues:
+    - Ensure passwords in hint files are trimmed (the loader does this automatically).
+    - Set `passwords.default` to a known value when many PDFs share a password.
+
+7.2 Watermarks not removed:
+    - Inspect `watermarks.rules` in your config. Increase `max_font_size` or
+      `max_distance_from_bottom` if the footer sits higher or uses larger fonts.
+
+7.3 Hidden content not cleared:
+    - Increase `clean.hidden_text_alpha_threshold` to treat semi-transparent text as hidden.
+
+7.4 Avoid reprocessing:
+    - Set `io.overwrite_existing = false` or pass `--skip-existing` when rerunning on the
+      same directory tree.
+
+7.5 Verbose debug:
+    - Wrap calls in your own script and log each `DocumentProcessingResult`.
+    - Consider integrating Python’s `logging` module for persistent trace files.
+
+This guide will evolve with the project. For GitHub users, feel free to link to this file
+from README.md or doc tooling of choice. For questions not covered here, the source
+modules contain inline docstrings that describe the underlying logic in more detail.

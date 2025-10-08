@@ -10,13 +10,14 @@ from typing import Callable, Iterator, Optional, Sequence
 
 import fitz  # PyMuPDF
 
+from .config import Config, load_defaults
 from .passwords import PasswordProvider
 from .sanitizer import (
     clear_document_metadata,
     clear_image_metadata,
     remove_hidden_text,
 )
-from .watermarks import WatermarkRule, remove_watermarks, DEFAULT_WATERMARK_RULES
+from .watermarks import WatermarkRule, remove_watermarks
 
 PasswordResolver = Callable[[Path], Optional[str]]
 
@@ -54,15 +55,18 @@ class _CallablePasswordProvider:
 class PDFCleaner:
     """Provide utilities for sanitising and saving cleaned PDF documents."""
 
+    DEFAULT_CONFIG = Config.model_validate(load_defaults())
+
     def __init__(
         self,
-        output_dir: Path,
+        output_dir: Optional[Path] = None,
         *,
-        sanitize_metadata: bool = True,
-        overwrite: bool = True,
+        sanitize_metadata: Optional[bool] = None,
+        overwrite: Optional[bool] = None,
         password_provider: Optional[PasswordProvider] = None,
         password_resolver: Optional[PasswordResolver] = None,
         watermark_rules: Optional[Sequence[WatermarkRule]] = None,
+        hidden_text_alpha_threshold: Optional[int] = None,
     ) -> None:
         """
         Create a new cleaner.
@@ -74,19 +78,53 @@ class PDFCleaner:
             password_provider: Object capable of providing passwords for encrypted PDFs.
             password_resolver: Callable variant of ``password_provider``.
             watermark_rules: Optional override for default watermark removal rules.
+            hidden_text_alpha_threshold: Alpha value (0-255) used to determine hidden text.
         """
+        if output_dir is None:
+            output_dir = self.DEFAULT_CONFIG.io.output_dir
+        if sanitize_metadata is None:
+            sanitize_metadata = self.DEFAULT_CONFIG.clean.sanitize_metadata
+        if overwrite is None:
+            overwrite = self.DEFAULT_CONFIG.io.overwrite_existing
+        if hidden_text_alpha_threshold is None:
+            hidden_text_alpha_threshold = self.DEFAULT_CONFIG.clean.hidden_text_alpha_threshold
+
         if password_provider and password_resolver:
             raise ValueError("Provide either password_provider or password_resolver, not both.")
 
         if password_resolver is not None:
             password_provider = _CallablePasswordProvider(password_resolver)
 
-        self.output_dir = output_dir
+        self.output_dir = Path(output_dir)
         self.sanitize_metadata = sanitize_metadata
         self.overwrite = overwrite
         self.password_provider = password_provider
-        self.watermark_rules = watermark_rules or DEFAULT_WATERMARK_RULES
+        self.watermark_rules = (
+            list(watermark_rules)
+            if watermark_rules is not None
+            else self.DEFAULT_CONFIG.compile_watermark_rules()
+        )
+        self.hidden_text_alpha_threshold = hidden_text_alpha_threshold
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: Config,
+        *,
+        password_provider: Optional[PasswordProvider] = None,
+        password_resolver: Optional[PasswordResolver] = None,
+    ) -> "PDFCleaner":
+        """Construct a cleaner from a Config object."""
+        return cls(
+            output_dir=config.io.output_dir,
+            sanitize_metadata=config.clean.sanitize_metadata,
+            overwrite=config.io.overwrite_existing,
+            password_provider=password_provider,
+            password_resolver=password_resolver,
+            watermark_rules=config.compile_watermark_rules(),
+            hidden_text_alpha_threshold=config.clean.hidden_text_alpha_threshold,
+        )
 
     def process_path(
         self,
@@ -174,7 +212,10 @@ class PDFCleaner:
 
             for page in document:
                 image_xrefs.extend(xref for xref, *_ in page.get_images(full=True))
-                hidden_text_removed += remove_hidden_text(page)
+                hidden_text_removed += remove_hidden_text(
+                    page,
+                    alpha_threshold=self.hidden_text_alpha_threshold,
+                )
                 matches = remove_watermarks(page, rules=self.watermark_rules)
                 watermarks_removed += len(matches)
                 text_chunks.append(page.get_text())

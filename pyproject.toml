@@ -13,6 +13,8 @@ authors = [
 ]
 dependencies = [
     "pymupdf>=1.24.0",
+    "pydantic>=2.7",
+    "platformdirs>=4.2",
 ]
 
 [project.optional-dependencies]

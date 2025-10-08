@@ -1,0 +1,24 @@
+[io]
+# When true (default) existing files are overwritten; set to false to keep prior runs untouched.
+overwrite_existing = false
+
+[clean]
+# Controls whether document metadata, image metadata, and hidden text are stripped.
+sanitize_metadata = true
+# Hidden text spans with opacity <= threshold are removed. Increase to catch semi-transparent overlays.
+hidden_text_alpha_threshold = 0
+
+[passwords]
+# Fallback password applied when no explicit mapping or hint matches (empty string disables the fallback).
+default = ""
+# Per-directory password hint filename. Blank or missing value disables hint lookups.
+hint_filename = ""
+
+[[watermarks.rules]]
+# Rule targeting the standard DriveThruRPG "Downloaded by ..." footer line.
+name = "download_notice"
+pattern = "^Downloaded by\\s+.+?\\s+on\\s+.+?\\.\\s*Unauthorized distribution prohibited\\.?$"
+ignore_case = true
+max_font_size = 12.0
+max_distance_from_bottom = 120.0
+fonts = ["helv", "helvetica", "helvetica-bold"]
