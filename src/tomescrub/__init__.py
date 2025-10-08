@@ -1,4 +1,4 @@
-"""PDFCleaner package exposing high-level cleaning utilities."""
+"""TomeScrub package exposing high-level cleaning utilities."""
 
 from .cli import main as cli_main
 from .passwords import PasswordProvider, load_password_file

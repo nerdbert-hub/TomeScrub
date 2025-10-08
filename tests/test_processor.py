@@ -8,8 +8,8 @@ import base64
 import fitz  # type: ignore
 import pytest
 
-from pdf_cleaner.passwords import PasswordProvider
-from pdf_cleaner.processor import (
+from tomescrub.passwords import PasswordProvider
+from tomescrub.processor import (
     PDFCleaner,
     PasswordAuthenticationError,
 )

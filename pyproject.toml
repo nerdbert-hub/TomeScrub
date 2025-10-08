@@ -3,9 +3,9 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pdf-cleaner"
+name = "tomescrub"
 version = "0.1.0"
-description = "Utilities for cleaning PDF documents with PyMuPDF."
+description = "TomeScrub utilities for cleaning PDF documents with PyMuPDF."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [

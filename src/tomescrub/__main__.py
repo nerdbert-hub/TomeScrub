@@ -1,4 +1,4 @@
-"""Module entry point for `python -m pdf_cleaner`."""
+"""Module entry point for `python -m tomescrub`."""
 
 from __future__ import annotations
 
