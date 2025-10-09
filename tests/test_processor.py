@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import base64
+import json
 
 import fitz  # type: ignore
 import pytest
 
+from tomescrub.cli import main as cli_main
 from tomescrub.passwords import PasswordProvider
 from tomescrub.processor import (
     PDFCleaner,
@@ -362,3 +364,40 @@ def test_corrupt_pdf_registers_failure(tmp_path: Path) -> None:
     assert stats.failed == 1
     assert stats.processed == 0
     assert stats.failures[0][0] == pdf_path
+
+
+def test_cli_run_log_written(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """CLI should persist a run log entry when enabled."""
+    source_root = tmp_path / "_unprocessed"
+    pdf_path = source_root / "doc.pdf"
+    _create_pdf(pdf_path, "Run log test")
+
+    output_root = tmp_path / "_processed"
+    log_path = tmp_path / "run_log.ndjson"
+
+    args = [
+        str(source_root),
+        "--output-dir",
+        str(output_root),
+        "--run-log",
+        "--run-log-path",
+        str(log_path),
+        "--run-log-quiet",
+    ]
+    exit_code = cli_main(args)
+    assert exit_code == 0
+    assert log_path.exists()
+    captured = capsys.readouterr()
+    assert "Run log appended" not in captured.out
+
+    lines = [line for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+
+    assert record["stats"]["processed"] == 1
+    processed_entries = [entry for entry in record["files"] if entry["status"] == "processed"]
+    assert len(processed_entries) == 1
+    processed_entry = processed_entries[0]
+    assert processed_entry["output"].endswith(".pdf")
+    assert processed_entry["pages"] == 1
+    assert "step_timings" in processed_entry

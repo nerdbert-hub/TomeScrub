@@ -10,6 +10,9 @@ Tooling scaffold for cleaning PDF documents with [PyMuPDF](https://pymupdf.readt
 - Automated sanitisation of document/image metadata and fully hidden text spans (keeps bookmarks, vector graphics, and visible content untouched).
 - Directory-aware processing that mirrors an input tree into a `_processed` output, copying non-PDF assets.
 - Streaming processor that avoids loading every result into memory; ideal for large collections.
+- Optional NDJSON run logging with per-file timings and configurable verbosity.
+- Per-file multiprocessing with configurable worker counts and batching.
+- Dirty-write guard so unchanged documents are skipped without losing mirrors.
 - CLI entry point for quick command-line usage over files or entire folders.
 - Pytest harness seeded with regression tests for the core behaviours.
 - Rich `DocumentProcessingResult` metadata (original vs cleaned permissions, encryption flag, extracted text).
@@ -49,6 +52,14 @@ python -m tomescrub _unprocessed --output-dir _processed --skip-existing
 ```
 
 `--skip-existing` is helpful on repeated runs or when output files are open elsewhere.
+
+### Capture run summaries
+
+```bash
+python -m tomescrub _unprocessed --output-dir _processed --run-log --run-log-path _processed/run_log.ndjson
+```
+
+`--run-log` writes an NDJSON record for each run (including per-file timings). Override the destination with `--run-log-path` and suppress the success note with `--run-log-quiet`.
 
 ### Unlock password protected PDFs
 
@@ -106,25 +117,48 @@ TomeScrub/
 ## Configuration
 - TomeScrub loads configuration with the following precedence (lowest -> highest): bundled defaults (`src/tomescrub/config/defaults.toml`), the first discovered config file (`--config`, `./tomescrub.toml`, or `%APPDATA%/tomescrub/config.toml`), environment variables prefixed with `TOMESCRUB__`, and finally explicit CLI overrides (`--set path=value` plus dedicated flags such as `--output-dir`).
 - All settings are defined in `src/tomescrub/config/schema.py` and exposed through the `Config` model. Load them in code via `tomescrub.load_config(path, overrides)`.
+- Key options:
+  - `io.output_dir`, `io.overwrite_existing`, `io.skip_unchanged`: control where outputs land and whether unchanged PDFs are rewritten.
+  - `io.run_log.enabled`, `io.run_log.path`, `io.run_log.quiet`: configure NDJSON run summaries and console noise.
+  - `clean.strip_document_metadata`, `clean.strip_image_metadata`, `clean.remove_hidden_text`, `clean.hidden_text_alpha_threshold`, `clean.extract_text`: fine-grained sanitisation controls.
+  - `passwords.default`, `passwords.hint_filename`, `passwords.password_file`: control password discovery.
+  - `watermarks.enabled`, `watermarks.clip_bottom_mm`, `watermarks.stop_after_first`, `watermarks.max_pages`, `watermarks.rules`: tune watermark checks.
+  - `performance.processes`, `performance.batch_size`: size the per-file worker pool.
+  - `save.linearize`, `save.garbage`, `save.deflate`: match save-time performance/compatibility requirements.
 - Example configuration (`configs/example.toml`):
 
 ````
 [io]
 output_dir = "_processed"
 overwrite_existing = false
+skip_unchanged = true
+
+  [io.run_log]
+  enabled = true
+  path = "_processed/run_log.ndjson"
+  quiet = false
 
 [clean]
-sanitize_metadata = true
+strip_document_metadata = true
+strip_image_metadata = true
+remove_hidden_text = true
 hidden_text_alpha_threshold = 16
+extract_text = true
 
 [passwords]
 default = ""
 hint_filename = ""
 password_file = ""
 
+[watermarks]
+enabled = true
+clip_bottom_mm = 12.0
+stop_after_first = true
+max_pages = 2
+
 [[watermarks.rules]]
 name = "download_notice"
-pattern = "^Downloaded by\s+.+?\s+on\s+.+?\.\\s*Unauthorized distribution prohibited\.?$"
+pattern = "^Downloaded by\\s+.+?\\s+on\\s+.+?\\.\\\\s*Unauthorized distribution prohibited\\\\.?$"
 ignore_case = true
 max_font_size = 14.0
 max_distance_from_bottom = 140.0
@@ -132,13 +166,21 @@ fonts = ["helv", "helvetica", "helvetica-bold"]
 
 [[watermarks.rules]]
 name = "order_reference"
-pattern = ".+\(Order #\d+\)$"
+pattern = ".+\\(Order #\\d+\\)$"
 max_font_size = 14.0
 max_distance_from_bottom = 140.0
 fonts = ["helv", "helvetica", "helvetica-bold"]
+
+[performance]
+processes = 4
+batch_size = 4
+
+[save]
+linearize = false
+garbage = 4
+deflate = true
 ````
 
-- Override individual fields without editing files using environment variables such as `TOMESCRUB__IO__OUTPUT_DIR=build/_processed` or `TOMESCRUB__PASSWORDS__HINT_FILENAME=none`.
 - CLI overrides support both friendly switches (e.g. `--skip-existing`, `--no-password-hints`) and dotted assignments (`--set clean.sanitize_metadata=false`).
 
 ## Metadata & Hidden Text Sanitisation
@@ -154,4 +196,4 @@ fonts = ["helv", "helvetica", "helvetica-bold"]
 
 ## Next Steps
 - Add content-aware cleaning features (redaction, annotation flattening, etc.).
-- Add structured logging and richer configuration support.
+- Build analysis tooling around the NDJSON run log (dashboards, trend reports).

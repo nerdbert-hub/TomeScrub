@@ -69,9 +69,12 @@ def get_default_watermark_rules() -> List[WatermarkRule]:
     return list(_DEFAULT_RULES)
 
 
-def _iter_text_lines(page: fitz.Page) -> Iterable[tuple[fitz.Rect, str, List[float], List[str]]]:
+def _iter_text_lines(
+    page: fitz.Page,
+    clip_rect: Optional[fitz.Rect] = None,
+) -> Iterable[tuple[fitz.Rect, str, List[float], List[str]]]:
     """Yield (rect, text, font_sizes, fonts) tuples for each textual line on a page."""
-    page_dict = page.get_text("dict", sort=True)
+    page_dict = page.get_text("dict", sort=True, clip=clip_rect)
     for block in page_dict.get("blocks", []):
         if block.get("type", 0) != 0:
             continue
@@ -91,6 +94,9 @@ def _iter_text_lines(page: fitz.Page) -> Iterable[tuple[fitz.Rect, str, List[flo
 def find_watermark_matches(
     page: fitz.Page,
     rules: Optional[Sequence[WatermarkRule]] = None,
+    *,
+    clip_rect: Optional[fitz.Rect] = None,
+    stop_after_first: bool = False,
 ) -> List[WatermarkMatch]:
     """Detect watermark candidates on a page according to the provided rules."""
     active_rules = list(rules or get_default_watermark_rules())
@@ -100,7 +106,7 @@ def find_watermark_matches(
     matches: List[WatermarkMatch] = []
     page_bottom = float(page.rect.y1)
 
-    for rect, raw_text, font_sizes, fonts in _iter_text_lines(page):
+    for rect, raw_text, font_sizes, fonts in _iter_text_lines(page, clip_rect=clip_rect):
         if not font_sizes:
             continue
         normalized = _normalize_text(raw_text)
@@ -121,6 +127,8 @@ def find_watermark_matches(
                         text=normalized,
                     )
                 )
+                if stop_after_first:
+                    return matches
                 break
     return matches
 
@@ -128,6 +136,9 @@ def find_watermark_matches(
 def remove_watermarks(
     page: fitz.Page,
     rules: Optional[Sequence[WatermarkRule]] = None,
+    *,
+    clip_rect: Optional[fitz.Rect] = None,
+    stop_after_first: bool = False,
 ) -> List[WatermarkMatch]:
     """
     Remove detected watermark lines from a page.
@@ -135,7 +146,7 @@ def remove_watermarks(
     Returns:
         The list of watermark matches that were removed.
     """
-    matches = find_watermark_matches(page, rules=rules)
+    matches = find_watermark_matches(page, rules=rules, clip_rect=clip_rect, stop_after_first=stop_after_first)
     if not matches:
         return []
 
