@@ -39,6 +39,8 @@ password_file = ""
 [watermarks]
 # Toggle watermark detection/removal.
 enabled = true
+# Choose scan strategy: "full" scans entire pages, "bottom" restricts to the lower band defined below.
+scan_mode = "full"
 # Limit detection to the bottom N millimetres of each page (0 = full page).
 clip_bottom_mm = 0.0
 # Stop scanning a page after the first rule matches.

@@ -9,7 +9,8 @@ import json
 import fitz  # type: ignore
 import pytest
 
-from tomescrub.cli import main as cli_main
+from tomescrub.cli import main as cli_main, _worker_clean_task
+from tomescrub.config import Config, load_defaults, WatermarkRuleConfig
 from tomescrub.passwords import PasswordProvider
 from tomescrub.processor import (
     PDFCleaner,
@@ -47,6 +48,18 @@ def _create_pdf_with_watermarks(
             fontname=watermark_font,
             fontsize=8,
         )
+    document.save(path)
+    document.close()
+
+
+def _create_pdf_with_header_and_footer(path: Path, header: str, footer: str) -> None:
+    """Create a PDF that contains header and footer lines."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), header)
+    bottom_y = float(page.rect.y1) - 18  # keep within bottom ~6mm band
+    page.insert_text((72, bottom_y), footer)
     document.save(path)
     document.close()
 
@@ -106,6 +119,11 @@ def test_process_path_mirrors_structure_and_reads_text(tmp_path: Path) -> None:
     assert result.page_count == 1
     assert result.elapsed >= 0
     assert "total" in result.step_timings
+    assert "open" in result.step_timings
+    assert "save" in result.step_timings
+    assert result.original_size_bytes > 0
+    assert result.output_size_bytes > 0
+    assert result.size_delta_bytes == result.output_size_bytes - result.original_size_bytes
     assert result.changed is True
 
     stats = cleaner.last_run_stats
@@ -135,6 +153,10 @@ def test_process_single_file_defaults_to_parent_root(tmp_path: Path) -> None:
     assert results[0].page_count == 1
     assert results[0].elapsed >= 0
     assert "total" in results[0].step_timings
+    assert "open" in results[0].step_timings
+    assert results[0].original_size_bytes > 0
+    assert results[0].output_size_bytes > 0
+    assert results[0].size_delta_bytes == results[0].output_size_bytes - results[0].original_size_bytes
     assert results[0].changed is True
 
 
@@ -318,6 +340,11 @@ def test_hidden_text_and_metadata_sanitised(tmp_path: Path) -> None:
     assert result.page_count == 1
     assert result.elapsed >= 0
     assert "total" in result.step_timings
+    assert "sanitize_metadata" in result.step_timings
+    assert "remove_hidden_text" in result.step_timings
+    assert result.original_size_bytes > 0
+    assert result.output_size_bytes > 0
+    assert result.size_delta_bytes == result.output_size_bytes - result.original_size_bytes
     assert result.changed is True
 
     with fitz.open(result.output) as cleaned:
@@ -366,6 +393,71 @@ def test_corrupt_pdf_registers_failure(tmp_path: Path) -> None:
     assert stats.failures[0][0] == pdf_path
 
 
+def test_watermark_scan_modes(tmp_path: Path) -> None:
+    """Ensure scan mode switches between bottom-band and full page parsing."""
+    source_root = tmp_path / "_unprocessed"
+    pdf_path = source_root / "scan.pdf"
+    _create_pdf_with_header_and_footer(pdf_path, "HEADER SCAN TEST", "FOOTER SCAN TEST")
+
+    rule_kwargs = {
+        "name": "scan_band",
+        "pattern": "SCAN TEST",
+        "ignore_case": True,
+        "max_distance_from_bottom": 1000.0,
+    }
+
+    # Bottom-only scan should leave header text untouched.
+    config_bottom = Config.model_validate(load_defaults())
+    config_bottom.io.output_dir = tmp_path / "_processed_bottom"
+    config_bottom.watermarks.enabled = True
+    config_bottom.watermarks.scan_mode = "bottom"
+    config_bottom.watermarks.clip_bottom_mm = 10.0
+    config_bottom.watermarks.stop_after_first = False
+    config_bottom.watermarks.max_pages = 0
+    config_bottom.watermarks.rules = [WatermarkRuleConfig(**rule_kwargs)]
+    cleaner_bottom = PDFCleaner.from_config(config_bottom)
+    result_bottom = cleaner_bottom.clean_document(pdf_path)
+    with fitz.open(result_bottom.output) as cleaned:
+        text_bottom = cleaned[0].get_text()
+        assert "HEADER SCAN TEST" in text_bottom
+        assert "FOOTER SCAN TEST" not in text_bottom
+
+    # Full scan should remove both header and footer instances.
+    config_full = Config.model_validate(load_defaults())
+    config_full.io.output_dir = tmp_path / "_processed_full"
+    config_full.watermarks.enabled = True
+    config_full.watermarks.scan_mode = "full"
+    config_full.watermarks.clip_bottom_mm = 0.0
+    config_full.watermarks.stop_after_first = False
+    config_full.watermarks.max_pages = 0
+    config_full.watermarks.rules = [WatermarkRuleConfig(**rule_kwargs)]
+    cleaner_full = PDFCleaner.from_config(config_full)
+    result_full = cleaner_full.clean_document(pdf_path)
+    with fitz.open(result_full.output) as cleaned:
+        text_full = cleaned[0].get_text()
+        assert "HEADER SCAN TEST" not in text_full
+        assert "FOOTER SCAN TEST" not in text_full
+
+
+def test_worker_clean_task_runs_in_separate_process(tmp_path: Path) -> None:
+    """Worker helper should open documents independently and return results."""
+    pdf_path = tmp_path / "input.pdf"
+    output_path = tmp_path / "output.pdf"
+    _create_pdf(pdf_path, "Worker process test")
+
+    config = Config.model_validate(load_defaults())
+    config.io.output_dir = tmp_path / "_processed_worker"
+    config.performance.processes = 2
+    payload = (config.model_dump(mode="json"), str(pdf_path), str(output_path), False)
+    status, result = _worker_clean_task(payload)
+
+    assert status == "ok"
+    assert result.output == output_path
+    assert result.output.exists()
+    with fitz.open(result.output) as cleaned:
+        assert "Worker process test" in cleaned[0].get_text()
+
+
 def test_cli_run_log_written(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI should persist a run log entry when enabled."""
     source_root = tmp_path / "_unprocessed"
@@ -401,3 +493,10 @@ def test_cli_run_log_written(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert processed_entry["output"].endswith(".pdf")
     assert processed_entry["pages"] == 1
     assert "step_timings" in processed_entry
+    assert "stage_timings_ms" in processed_entry
+    for key in ("open_ms", "sanitize_ms", "watermark_ms", "save_ms", "extract_ms"):
+        assert key in processed_entry
+        assert processed_entry["stage_timings_ms"][key] == processed_entry[key]
+    assert processed_entry["original_size_bytes"] >= 0
+    assert processed_entry["output_size_bytes"] >= 0
+    assert processed_entry["size_delta_bytes"] == processed_entry["output_size_bytes"] - processed_entry["original_size_bytes"]

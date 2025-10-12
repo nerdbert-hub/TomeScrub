@@ -128,6 +128,7 @@ class WatermarkConfig(BaseModel):
     """Watermark detection configuration."""
 
     enabled: bool = True
+    scan_mode: str = "full"
     clip_bottom_mm: Optional[float] = None
     stop_after_first: bool = False
     max_pages: int = 0
@@ -139,6 +140,14 @@ class WatermarkConfig(BaseModel):
         if value < 0:
             raise ValueError("watermarks.max_pages must be >= 0")
         return value
+
+    @field_validator("scan_mode")
+    @classmethod
+    def _validate_scan_mode(cls, value: str) -> str:
+        lowered = value.strip().lower()
+        if lowered not in {"full", "bottom"}:
+            raise ValueError('watermarks.scan_mode must be either "full" or "bottom"')
+        return lowered
 
     def compile_rules(self) -> List["WatermarkRule"]:
         return [rule.compile() for rule in self.rules]

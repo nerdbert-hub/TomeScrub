@@ -11,6 +11,7 @@ Tooling scaffold for cleaning PDF documents with [PyMuPDF](https://pymupdf.readt
 - Directory-aware processing that mirrors an input tree into a `_processed` output, copying non-PDF assets.
 - Streaming processor that avoids loading every result into memory; ideal for large collections.
 - Optional NDJSON run logging with per-file timings and configurable verbosity.
+- Rich CLI with subcommands (`process`, `dry-run`, `rules test`, `print-config`, `stats`) and live progress that surfaces per-stage summaries at the end of each run.
 - Per-file multiprocessing with configurable worker counts and batching.
 - Dirty-write guard so unchanged documents are skipped without losing mirrors.
 - CLI entry point for quick command-line usage over files or entire folders.
@@ -60,6 +61,23 @@ python -m tomescrub _unprocessed --output-dir _processed --run-log --run-log-pat
 ```
 
 `--run-log` writes an NDJSON record for each run (including per-file timings). Override the destination with `--run-log-path` and suppress the success note with `--run-log-quiet`.
+
+### Subcommands
+
+The CLI is organised into subcommands; `process` remains the default, so existing invocations still work (`python -m tomescrub input.pdf`). Additional commands:
+
+- `process` — Clean files and write outputs (default when no command is supplied).
+- `dry-run` — Execute the full detection pipeline and report results without writing cleaned PDFs.
+- `rules test` — Evaluate configured watermark rules against sample text or a specific PDF page clip:
+
+  ```bash
+  python -m tomescrub rules test --text "Downloaded by Jane" --pdf sample.pdf --page 0
+  ```
+
+- `print-config` — Display the final configuration after applying environment variables and CLI overrides.
+- `stats` — Summarise one or more runs from `run_log.ndjson` (supports `--latest` to restrict output to the most recent entry).
+
+Both `process` and `dry-run` honour the existing CLI flags for configuration overrides, passwords, and run logging.
 
 ### Unlock password protected PDFs
 
@@ -122,8 +140,8 @@ TomeScrub/
   - `io.run_log.enabled`, `io.run_log.path`, `io.run_log.quiet`: configure NDJSON run summaries and console noise.
   - `clean.strip_document_metadata`, `clean.strip_image_metadata`, `clean.remove_hidden_text`, `clean.hidden_text_alpha_threshold`, `clean.extract_text`: fine-grained sanitisation controls.
   - `passwords.default`, `passwords.hint_filename`, `passwords.password_file`: control password discovery.
-  - `watermarks.enabled`, `watermarks.clip_bottom_mm`, `watermarks.stop_after_first`, `watermarks.max_pages`, `watermarks.rules`: tune watermark checks.
-  - `performance.processes`, `performance.batch_size`: size the per-file worker pool.
+  - `watermarks.enabled`, `watermarks.scan_mode`, `watermarks.clip_bottom_mm`, `watermarks.stop_after_first`, `watermarks.max_pages`, `watermarks.rules`: tune watermark checks.
+  - `performance.processes`, `performance.batch_size`: size the per-file worker pool. TomeScrub spins up a `ProcessPoolExecutor` so each worker opens PDFs independently (PyMuPDF objects stay process-local); batching limits how many documents are dispatched to the pool at a time.
   - `save.linearize`, `save.garbage`, `save.deflate`: match save-time performance/compatibility requirements.
 - Example configuration (`configs/example.toml`):
 
@@ -183,6 +201,13 @@ deflate = true
 
 - CLI overrides support both friendly switches (e.g. `--skip-existing`, `--no-password-hints`) and dotted assignments (`--set clean.sanitize_metadata=false`).
 
+### Run Log Output
+- Enabling `io.run_log.enabled` appends an NDJSON document after each run. Every processed file entry now carries per-stage timings in milliseconds alongside the existing second-resolution `step_timings` block.
+- Top-level fields mirror the primary pipeline stages: `open_ms`, `detect_password_ms`, `sanitize_ms`, `hidden_text_ms`, `watermark_ms`, `save_ms`, and `extract_ms`.
+- The same values are grouped under `stage_timings_ms` for consumers that prefer a single structured object.
+- File size metrics are included for each entry via `original_size_bytes`, `output_size_bytes`, and `size_delta_bytes` so you can spot growth or shrinkage quickly.
+- `step_timings` remains for backwards compatibility (seconds precision, including the `total` duration).
+
 ## Metadata & Hidden Text Sanitisation
 - Each PDF run through the cleaner has its Info/XMP metadata cleared and embedded image metadata stripped.
 - Text spans rendered with zero opacity (`alpha==0`) are removed automatically; this mirrors Acrobat's "Remove Hidden Information -> Hidden Text".
@@ -191,6 +216,7 @@ deflate = true
 
 ## Watermark Rules
 - Declarative watermark patterns now live in configuration (`watermarks.rules` in TOML files) and are compiled at runtime.
+- `watermarks.scan_mode` toggles between full-page scanning (`"full"`) and a restricted footer pass (`"bottom"`). When using `"bottom"`, set `watermarks.clip_bottom_mm` to the band height (in millimetres) to minimise text parsing work.
 - Each rule still supports regex patterns, case sensitivity, font-size guardrails, and a distance-from-bottom threshold -- identical to the previous hard-coded structures.
 - To add or adjust a rule, edit your config and (optionally) add a matching regression test in `tests/test_processor.py`. Restart or reload your process to pick up the changes.
 

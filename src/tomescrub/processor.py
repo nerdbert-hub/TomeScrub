@@ -2,25 +2,29 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 import logging
 import os
 import shutil
 from time import perf_counter
-from typing import Callable, Iterator, Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import fitz  # PyMuPDF
 
 from .config import Config, load_defaults
 from .passwords import PasswordProvider
-from .sanitizer import (
-    clear_document_metadata,
-    clear_image_metadata,
-    remove_hidden_text,
+from .pipeline import (
+    ClearImageMetadataStage,
+    DetectPasswordStage,
+    OpenDocumentStage,
+    PipelineContext,
+    ProcessPagesStage,
+    SanitizeMetadataStage,
+    SaveDocumentStage,
+    STAGE_ORDER,
 )
-from .watermarks import WatermarkRule, remove_watermarks
+from .watermarks import WatermarkRule
 
 PasswordResolver = Callable[[Path], Optional[str]]
 
@@ -52,6 +56,9 @@ class DocumentProcessingResult:
     image_metadata_cleared: int
     document_metadata_cleared: bool
     page_count: int
+    original_size_bytes: int
+    output_size_bytes: int
+    size_delta_bytes: int
     elapsed: float
     step_timings: dict[str, float]
 
@@ -152,12 +159,14 @@ class PDFCleaner:
         watermark_rules: Optional[Sequence[WatermarkRule]] = None,
         hidden_text_alpha_threshold: Optional[int] = None,
         watermarks_enabled: Optional[bool] = None,
+        watermarks_scan_mode: Optional[str] = None,
         watermarks_clip_bottom_mm: Optional[float] = None,
         watermarks_stop_after_first: Optional[bool] = None,
         watermarks_max_pages: Optional[int] = None,
         save_linearize: Optional[bool] = None,
         save_garbage: Optional[int] = None,
         save_deflate: Optional[bool] = None,
+        dry_run: bool = False,
         processes: Optional[int] = None,
         batch_size: Optional[int] = None,
     ) -> None:
@@ -173,6 +182,7 @@ class PDFCleaner:
             watermark_rules: Optional override for default watermark removal rules.
             hidden_text_alpha_threshold: Alpha value (0-255) used to determine hidden text.
             watermarks_enabled: Enable or disable watermark detection/removal.
+            watermarks_scan_mode: Select between full-page scanning and bottom-band scanning.
             watermarks_clip_bottom_mm: Restrict watermark detection to the bottom band (millimetres).
             watermarks_stop_after_first: Halt detection once a rule matches on a page.
             watermarks_max_pages: Limit the number of pages scanned for watermarks (0 = all).
@@ -181,6 +191,7 @@ class PDFCleaner:
             save_deflate: Compress object streams during save.
             processes: Preferred worker count for parallel processing (used by CLI).
             batch_size: Chunk size for dispatching parallel tasks.
+            dry_run: When True, skip writing cleaned outputs (analysis only).
         """
         if output_dir is None:
             output_dir = self.DEFAULT_CONFIG.io.output_dir
@@ -208,6 +219,8 @@ class PDFCleaner:
             skip_unchanged = self.DEFAULT_CONFIG.io.skip_unchanged
         if watermarks_enabled is None:
             watermarks_enabled = self.DEFAULT_CONFIG.watermarks.enabled
+        if watermarks_scan_mode is None:
+            watermarks_scan_mode = self.DEFAULT_CONFIG.watermarks.scan_mode
         if watermarks_clip_bottom_mm is None:
             watermarks_clip_bottom_mm = self.DEFAULT_CONFIG.watermarks.clip_bottom_mm
         if watermarks_stop_after_first is None:
@@ -243,15 +256,23 @@ class PDFCleaner:
         self.overwrite = overwrite
         self.skip_unchanged = bool(skip_unchanged)
         self.password_provider = password_provider
+        self.dry_run = bool(dry_run)
         base_rules = list(watermark_rules) if watermark_rules is not None else self.DEFAULT_CONFIG.compile_watermark_rules()
         self.watermark_rules = base_rules if watermarks_enabled else []
         self.watermarks_enabled = bool(watermarks_enabled)
+        scan_mode_normalized = str(watermarks_scan_mode).strip().lower()
+        if scan_mode_normalized not in {"full", "bottom"}:
+            raise ValueError('watermarks_scan_mode must be either "full" or "bottom"')
+        self.watermarks_scan_mode = scan_mode_normalized
         self.watermarks_clip_bottom_mm = watermarks_clip_bottom_mm
-        self.watermarks_clip_height_pts = (
-            None
-            if watermarks_clip_bottom_mm in (None, 0)
-            else float(watermarks_clip_bottom_mm) * 72.0 / 25.4
-        )
+        if self.watermarks_scan_mode == "bottom":
+            self.watermarks_clip_height_pts = (
+                None
+                if watermarks_clip_bottom_mm in (None, 0)
+                else float(watermarks_clip_bottom_mm) * 72.0 / 25.4
+            )
+        else:
+            self.watermarks_clip_height_pts = None
         self.watermarks_stop_after_first = bool(watermarks_stop_after_first)
         self.watermarks_max_pages = int(watermarks_max_pages or 0)
         self.hidden_text_alpha_threshold = hidden_text_alpha_threshold
@@ -260,11 +281,20 @@ class PDFCleaner:
         self.save_deflate = bool(save_deflate)
         self.processes = processes
         self.batch_size = batch_size
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        if not self.dry_run:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
         self._logger = logging.getLogger(__name__)
         self._current_stats: Optional[RunStatistics] = None
         self._last_stats: Optional[RunStatistics] = None
         self._run_started_at: Optional[float] = None
+        self._stages = [
+            OpenDocumentStage(),
+            DetectPasswordStage(),
+            SanitizeMetadataStage(),
+            ProcessPagesStage(),
+            ClearImageMetadataStage(),
+            SaveDocumentStage(),
+        ]
 
     @classmethod
     def from_config(
@@ -273,6 +303,7 @@ class PDFCleaner:
         *,
         password_provider: Optional[PasswordProvider] = None,
         password_resolver: Optional[PasswordResolver] = None,
+        dry_run: bool = False,
     ) -> "PDFCleaner":
         """Construct a cleaner from a Config object."""
         return cls(
@@ -289,12 +320,14 @@ class PDFCleaner:
             watermark_rules=config.compile_watermark_rules(),
             hidden_text_alpha_threshold=config.clean.hidden_text_alpha_threshold,
             watermarks_enabled=config.watermarks.enabled,
+            watermarks_scan_mode=config.watermarks.scan_mode,
             watermarks_clip_bottom_mm=config.watermarks.clip_bottom_mm,
             watermarks_stop_after_first=config.watermarks.stop_after_first,
             watermarks_max_pages=config.watermarks.max_pages,
             save_linearize=config.save.linearize,
             save_garbage=config.save.garbage,
             save_deflate=config.save.deflate,
+            dry_run=dry_run,
             processes=_safe_process_count(config.performance.processes),
             batch_size=config.performance.batch_size,
         )
@@ -359,10 +392,11 @@ class PDFCleaner:
 
             relative_path = source.relative_to(source_root)
             destination = self.output_dir / relative_path
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not self.dry_run:
+                destination.parent.mkdir(parents=True, exist_ok=True)
 
             if source.suffix.lower() == ".pdf":
-                if destination.exists() and not self.overwrite:
+                if not self.dry_run and destination.exists() and not self.overwrite:
                     self._logger.debug("Skipping processed PDF %s (already exists).", destination)
                     if self._current_stats:
                         self._current_stats.skipped += 1
@@ -395,17 +429,22 @@ class PDFCleaner:
                 _notify("processed", result, message=status)
                 yield result
             else:
-                if destination.exists() and not self.overwrite:
+                if not self.dry_run and destination.exists() and not self.overwrite:
                     self._logger.debug("Skipping asset %s (already exists).", destination)
                     if self._current_stats:
                         self._current_stats.skipped += 1
                     _notify("skipped", message="asset-exists")
                     return
-                shutil.copy2(source, destination)
-                if self._current_stats:
-                    self._current_stats.copied += 1
-                self._logger.debug("Copied asset %s -> %s", source, destination)
-                _notify("copied", message="asset")
+                if self.dry_run:
+                    self._logger.debug("Dry run: would copy asset %s -> %s", source, destination)
+                    message = "asset-dry-run"
+                else:
+                    shutil.copy2(source, destination)
+                    if self._current_stats:
+                        self._current_stats.copied += 1
+                    self._logger.debug("Copied asset %s -> %s", source, destination)
+                    message = "asset"
+                _notify("copied", message=message)
         finally:
             if is_root_invocation:
                 self._finalise_run()
@@ -438,150 +477,62 @@ class PDFCleaner:
 
         if output_path is None:
             output_path = self._build_output_path(pdf_path, suffix)
+        if not self.dry_run:
             output_path.parent.mkdir(parents=True, exist_ok=True)
+        original_size = pdf_path.stat().st_size
+        ctx = PipelineContext(pdf_path=pdf_path, output_path=output_path)
+        ctx.stage_timings = {name: 0.0 for name in STAGE_ORDER}
+        ctx.original_size_bytes = original_size
 
-        timings: dict[str, float] = {}
         overall_start = perf_counter()
+        try:
+            for stage in self._stages:
+                stage.run(self, ctx)
+        finally:
+            if ctx.document is not None:
+                ctx.document.close()
 
-        step_start = perf_counter()
-        with self._open_document(pdf_path) as (document, was_encrypted):
-            timings["open"] = perf_counter() - step_start
-            original_permissions = document.permissions
-            text_chunks: list[str] = []
-            watermarks_removed = 0
-            hidden_text_removed = 0
-            image_xrefs: list[int] = [] if self.strip_image_metadata else []
-            document_metadata_cleared = False
-            page_count = document.page_count
+        total_elapsed = perf_counter() - overall_start
+        ctx.stage_timings["total"] = total_elapsed
 
-            if self.strip_document_metadata:
-                step_start = perf_counter()
-                document_metadata_cleared = clear_document_metadata(document)
-                timings["clear_document_metadata"] = perf_counter() - step_start
-            else:
-                timings["clear_document_metadata"] = 0.0
-
-            watermark_page_indices: Optional[set[int]] = None
-            if self.watermarks_enabled and self.watermarks_max_pages > 0:
-                count = min(self.watermarks_max_pages, page_count)
-                front = set(range(count))
-                back = set(range(max(0, page_count - count), page_count))
-                watermark_page_indices = front | back
-
-            step_start = perf_counter()
-            for index, page in enumerate(document):
-                if self.strip_image_metadata:
-                    image_xrefs.extend(xref for xref, *_ in page.get_images(full=True))
-
-                if self.remove_hidden_text:
-                    hidden_text_removed += remove_hidden_text(
-                        page,
-                        alpha_threshold=self.hidden_text_alpha_threshold,
-                    )
-
-                if self.watermarks_enabled and self.watermark_rules:
-                    if watermark_page_indices is None or index in watermark_page_indices:
-                        clip_rect = None
-                        if self.watermarks_clip_height_pts:
-                            height = min(self.watermarks_clip_height_pts, float(page.rect.height))
-                            y0 = max(float(page.rect.y1) - height, float(page.rect.y0))
-                            clip_rect = fitz.Rect(page.rect.x0, y0, page.rect.x1, page.rect.y1)
-                        matches = remove_watermarks(
-                            page,
-                            rules=self.watermark_rules,
-                            clip_rect=clip_rect,
-                            stop_after_first=self.watermarks_stop_after_first,
-                        )
-                        watermarks_removed += len(matches)
-
-                if self.extract_text:
-                    text_chunks.append(page.get_text())
-            timings["process_pages"] = perf_counter() - step_start
-
-            if self.strip_image_metadata and image_xrefs:
-                step_start = perf_counter()
-                image_metadata_cleared = clear_image_metadata(document, image_xrefs)
-                timings["clear_image_metadata"] = perf_counter() - step_start
-            else:
-                image_metadata_cleared = 0
-                timings["clear_image_metadata"] = 0.0
-
-            result_changed = any(
-                (
-                    document_metadata_cleared,
-                    image_metadata_cleared,
-                    hidden_text_removed,
-                    watermarks_removed,
-                )
-            ) or was_encrypted
-            should_save = not (self.skip_unchanged and not result_changed)
-
-            if should_save:
-                step_start = perf_counter()
-                document.save(
-                    output_path,
-                    encryption=fitz.PDF_ENCRYPT_NONE,
-                    garbage=self.save_garbage,
-                    deflate=self.save_deflate,
-                    linear=self.save_linearize,
-                )
-                timings["save"] = perf_counter() - step_start
-            else:
-                timings["save"] = 0.0
-
-        if should_save:
-            step_start = perf_counter()
-            with fitz.open(output_path) as cleaned:
-                cleaned_permissions = cleaned.permissions
-            timings["verify"] = perf_counter() - step_start
+        if output_path.exists():
+            output_size = output_path.stat().st_size
         else:
-            if not output_path.exists():
-                shutil.copy2(pdf_path, output_path)
-            cleaned_permissions = original_permissions
-            timings["verify"] = 0.0
+            output_size = original_size
+        ctx.output_size_bytes = output_size
+        size_delta = output_size - original_size
 
-        elapsed = perf_counter() - overall_start
-        timings["total"] = elapsed
+        text = "".join(ctx.text_chunks) if self.extract_text else ""
 
         self._logger.debug(
             "Completed %s in %.3fs (%s)",
             pdf_path,
-            elapsed,
-            ", ".join(f"{name}={value:.3f}s" for name, value in timings.items()),
+            total_elapsed,
+            ", ".join(
+                f"{name}={ctx.stage_timings[name]:.3f}s"
+                for name in [*STAGE_ORDER, "total"]
+                if name in ctx.stage_timings
+            ),
         )
 
         return DocumentProcessingResult(
             source=pdf_path,
             output=output_path,
-            text="".join(text_chunks) if self.extract_text else "",
-            was_encrypted=was_encrypted,
-            original_permissions=original_permissions,
-            cleaned_permissions=cleaned_permissions,
-            watermarks_removed=watermarks_removed,
-            hidden_text_removed=hidden_text_removed,
-            image_metadata_cleared=image_metadata_cleared,
-            document_metadata_cleared=document_metadata_cleared,
-            page_count=page_count,
-            elapsed=elapsed,
-            step_timings=timings,
+            text=text,
+            was_encrypted=ctx.was_encrypted,
+            original_permissions=ctx.original_permissions,
+            cleaned_permissions=ctx.cleaned_permissions,
+            watermarks_removed=ctx.watermarks_removed,
+            hidden_text_removed=ctx.hidden_text_removed,
+            image_metadata_cleared=ctx.image_metadata_cleared,
+            document_metadata_cleared=ctx.document_metadata_cleared,
+            page_count=ctx.page_count,
+            original_size_bytes=original_size,
+            output_size_bytes=output_size,
+            size_delta_bytes=size_delta,
+            elapsed=total_elapsed,
+            step_timings=ctx.stage_timings,
         )
-
-    @contextmanager
-    def _open_document(self, pdf_path: Path) -> Iterator[tuple[fitz.Document, bool]]:
-        document = fitz.open(pdf_path)
-        try:
-            needs_pass_initial = document.needs_pass
-            is_encrypted_initial = document.is_encrypted
-            if needs_pass_initial:
-                password = self._resolve_password(pdf_path)
-                if password is None:
-                    raise PasswordAuthenticationError(f"Password required for encrypted PDF: {pdf_path}")
-                if document.authenticate(password) == 0:
-                    raise PasswordAuthenticationError(f"Failed to unlock PDF with provided password: {pdf_path}")
-            was_encrypted = bool(needs_pass_initial or is_encrypted_initial)
-            yield document, was_encrypted
-        finally:
-            document.close()
 
     def _resolve_password(self, pdf_path: Path) -> Optional[str]:
         if self.password_provider is None:
