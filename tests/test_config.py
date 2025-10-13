@@ -75,3 +75,31 @@ def test_load_config_env_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config_cli.io.run_log.enabled is True
     assert config_cli.io.run_log.path == Path("env_log.ndjson")
     assert config_cli.io.run_log.quiet is True
+
+
+def test_save_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sanity check defaults for save configuration."""
+    monkeypatch.delenv("TOMESCRUB__SAVE__BACKEND", raising=False)
+    config = load_config(config_path=None, cli_sets=[])
+    save = config.save
+    assert save.backend == "pymupdf"
+    assert save.linearize is False
+    assert save.pdf_version is None
+    assert save.fonts.subset is True
+    assert save.images.threshold_factor == 1.5
+    assert save.images.jpeg.qfactor == pytest.approx(0.08)
+    assert save.links.preserve_links is True
+    assert save.misc.detect_duplicate_images is True
+
+
+def test_save_backend_cli_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLI overrides should update nested save configuration."""
+    overrides = [
+        "save.backend=ghostscript",
+        "save.fonts.subset=false",
+        "save.images.photo_compression=jpx",
+    ]
+    config = load_config(config_path=None, cli_sets=overrides)
+    assert config.save.backend == "ghostscript"
+    assert config.save.fonts.subset is False
+    assert config.save.images.photo_compression == "jpx"

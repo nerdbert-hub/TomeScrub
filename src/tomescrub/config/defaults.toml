@@ -72,9 +72,57 @@ processes = "auto"
 batch_size = 8
 
 [save]
+# Select the save backend to use. Options: pymupdf, ghostscript, qpdf, chain.
+backend = "pymupdf"
 # Optimise saved PDFs for web view (Acrobat 10 compatibility).
 linearize = false
-# MuPDF garbage collection level (0-4) when saving.
+# Preferred PDF version when backends support it.
+pdf_version = ""
+# MuPDF garbage collection level (0-4) when saving (pymupdf backend).
 garbage = 4
-# Compress object streams during save.
+# Compress object streams during save (pymupdf backend).
 deflate = true
+
+  [save.fonts]
+  subset = true
+  embed_all = true
+  compress = true
+
+  [save.images]
+  threshold_factor = 1.5
+  color_target_ppi = 300
+  gray_target_ppi = 300
+  mono_target_ppi = 600
+  photo_compression = "jpeg"
+  lineart_compression = "zip"
+
+    [save.images.jpeg]
+    qfactor = 0.08
+    h_samples = [2, 1, 1, 2]
+    v_samples = [2, 1, 1, 2]
+    blend = 1
+
+  [save.links]
+  preserve_links = true
+  preserve_bookmarks = true
+
+  [save.layers]
+  flatten_hidden = false
+  remove_ocg_metadata = false
+
+  [save.misc]
+  remove_thumbnails = false
+  fast_web_view = false
+  detect_duplicate_images = true
+  leave_color_unchanged = true
+
+  [save.ghostscript]
+  exe = ""
+  extra = []
+
+  [save.qpdf]
+  exe = ""
+  extra = []
+
+  [save.pikepdf]
+  enabled = false

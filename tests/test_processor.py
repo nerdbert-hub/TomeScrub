@@ -11,11 +11,13 @@ import pytest
 
 from tomescrub.cli import main as cli_main, _worker_clean_task
 from tomescrub.config import Config, load_defaults, WatermarkRuleConfig
+from tomescrub.config.schema import SaveConfig
 from tomescrub.passwords import PasswordProvider
 from tomescrub.processor import (
     PDFCleaner,
     PasswordAuthenticationError,
 )
+from tomescrub.save_backends import PyMuPDFSaveBackend, get_save_backend
 
 
 def _create_pdf(path: Path, text: str) -> None:
@@ -84,6 +86,14 @@ def test_missing_file_raises(tmp_path: Path) -> None:
     cleaner = PDFCleaner(output_dir=tmp_path / "out")
     with pytest.raises(FileNotFoundError):
         cleaner.clean_document(tmp_path / "missing.pdf")
+
+
+def test_default_save_backend_is_pymupdf() -> None:
+    """PDFCleaner should default to the PyMuPDF save backend."""
+    backend = get_save_backend(SaveConfig())
+    assert isinstance(backend, PyMuPDFSaveBackend)
+    cleaner = PDFCleaner()
+    assert isinstance(cleaner.save_backend, PyMuPDFSaveBackend)
 
 
 def test_process_path_mirrors_structure_and_reads_text(tmp_path: Path) -> None:

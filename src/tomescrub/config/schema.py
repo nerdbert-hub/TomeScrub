@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -182,9 +182,19 @@ class PerformanceConfig(BaseModel):
 class SaveConfig(BaseModel):
     """PDF saving options."""
 
+    backend: str = "pymupdf"
     linearize: bool = False
+    pdf_version: Optional[str] = None
     garbage: int = 4
     deflate: bool = True
+    fonts: "SaveFontsConfig" = Field(default_factory=lambda: SaveFontsConfig())
+    images: "SaveImagesConfig" = Field(default_factory=lambda: SaveImagesConfig())
+    links: "SaveLinksConfig" = Field(default_factory=lambda: SaveLinksConfig())
+    layers: "SaveLayersConfig" = Field(default_factory=lambda: SaveLayersConfig())
+    misc: "SaveMiscConfig" = Field(default_factory=lambda: SaveMiscConfig())
+    ghostscript: "SaveGhostscriptConfig" = Field(default_factory=lambda: SaveGhostscriptConfig())
+    qpdf: "SaveQpdfConfig" = Field(default_factory=lambda: SaveQpdfConfig())
+    pikepdf: "SavePikepdfConfig" = Field(default_factory=lambda: SavePikepdfConfig())
 
     @field_validator("garbage")
     @classmethod
@@ -193,6 +203,82 @@ class SaveConfig(BaseModel):
             raise ValueError("save.garbage must be between 0 and 4")
         return value
 
+    @field_validator("backend", mode="before")
+    @classmethod
+    def _normalise_backend(cls, value: Optional[str]) -> str:
+        backend = (value or "pymupdf").strip().lower()
+        allowed = {"pymupdf", "ghostscript", "qpdf", "chain"}
+        if backend not in allowed:
+            raise ValueError(f"save.backend must be one of {sorted(allowed)}")
+        return backend
+
+    @field_validator("pdf_version", mode="before")
+    @classmethod
+    def _empty_pdf_version_to_none(cls, value: Optional[str]) -> Optional[str]:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+
+class SaveFontsConfig(BaseModel):
+    subset: bool = True
+    embed_all: bool = True
+    compress: bool = True
+
+
+class SaveJPEGConfig(BaseModel):
+    qfactor: Optional[float] = None
+    h_samples: List[int] = Field(default_factory=lambda: [2, 1, 1, 2])
+    v_samples: List[int] = Field(default_factory=lambda: [2, 1, 1, 2])
+    blend: Optional[int] = None
+
+
+class SaveImagesConfig(BaseModel):
+    threshold_factor: float = 1.5
+    color_target_ppi: int = 300
+    gray_target_ppi: int = 300
+    mono_target_ppi: int = 600
+    photo_compression: Literal["jpeg", "jpx", "zip"] = "jpeg"
+    lineart_compression: Literal["zip", "fax"] = "zip"
+    jpeg: SaveJPEGConfig = Field(default_factory=SaveJPEGConfig)
+
+    @field_validator("mono_target_ppi")
+    @classmethod
+    def _validate_mono_ppi(cls, value: int) -> int:
+        if not (150 <= value <= 1200):
+            raise ValueError("save.images.mono_target_ppi must be between 150 and 1200")
+        return value
+
+
+class SaveLinksConfig(BaseModel):
+    preserve_links: bool = True
+    preserve_bookmarks: bool = True
+
+
+class SaveLayersConfig(BaseModel):
+    flatten_hidden: bool = False
+    remove_ocg_metadata: bool = False
+
+
+class SaveMiscConfig(BaseModel):
+    remove_thumbnails: bool = False
+    fast_web_view: bool = False
+    detect_duplicate_images: bool = True
+    leave_color_unchanged: bool = True
+
+
+class SaveGhostscriptConfig(BaseModel):
+    exe: str = ""
+    extra: List[str] = Field(default_factory=list)
+
+
+class SaveQpdfConfig(BaseModel):
+    exe: str = ""
+    extra: List[str] = Field(default_factory=list)
+
+
+class SavePikepdfConfig(BaseModel):
+    enabled: bool = False
 
 class Config(BaseModel):
     """Top-level TomeScrub configuration model."""

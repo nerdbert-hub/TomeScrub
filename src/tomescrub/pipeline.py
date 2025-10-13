@@ -242,26 +242,24 @@ class SaveDocumentStage(PipelineStage):
 
         if cleaner.dry_run:
             ctx.cleaned_permissions = ctx.original_permissions
-            _record_timing(ctx.stage_timings, self.name, perf_counter() - start)
+            ctx.stage_timings["save"] = 0.0
+            ctx.stage_timings["verify"] = 0.0
             return
 
         if ctx.should_save:
-            document.save(
-                ctx.output_path,
-                encryption=fitz.PDF_ENCRYPT_NONE,
-                garbage=cleaner.save_garbage,
-                deflate=cleaner.save_deflate,
-                linear=cleaner.save_linearize,
-            )
-            with fitz.open(ctx.output_path) as cleaned:
-                ctx.cleaned_permissions = cleaned.permissions
+            outcome = cleaner.save_backend.save(cleaner, ctx, document)
+            total_elapsed = perf_counter() - start
+            save_time = max(total_elapsed - outcome.verify_time, 0.0)
+            ctx.stage_timings["save"] = save_time
+            ctx.stage_timings["verify"] = outcome.verify_time
+            ctx.cleaned_permissions = outcome.cleaned_permissions
         else:
             if not ctx.output_path.exists():
                 ctx.output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ctx.pdf_path, ctx.output_path)
             ctx.cleaned_permissions = ctx.original_permissions
-
-        _record_timing(ctx.stage_timings, self.name, perf_counter() - start)
+            ctx.stage_timings["save"] = 0.0
+            ctx.stage_timings["verify"] = 0.0
 
 
 __all__ = [

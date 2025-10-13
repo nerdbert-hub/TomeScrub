@@ -13,6 +13,7 @@ from typing import Callable, Optional, Sequence
 import fitz  # PyMuPDF
 
 from .config import Config, load_defaults
+from .config.schema import SaveConfig
 from .passwords import PasswordProvider
 from .pipeline import (
     ClearImageMetadataStage,
@@ -25,6 +26,7 @@ from .pipeline import (
     STAGE_ORDER,
 )
 from .watermarks import WatermarkRule
+from .save_backends import get_save_backend
 
 PasswordResolver = Callable[[Path], Optional[str]]
 
@@ -166,6 +168,7 @@ class PDFCleaner:
         save_linearize: Optional[bool] = None,
         save_garbage: Optional[int] = None,
         save_deflate: Optional[bool] = None,
+        save_config: Optional[SaveConfig] = None,
         dry_run: bool = False,
         processes: Optional[int] = None,
         batch_size: Optional[int] = None,
@@ -215,6 +218,9 @@ class PDFCleaner:
             remove_hidden_text = self.DEFAULT_CONFIG.clean.remove_hidden_text
         if extract_text is None:
             extract_text = self.DEFAULT_CONFIG.clean.extract_text
+        if save_config is None:
+            save_config = SaveConfig()
+        self.save_config = save_config
         if skip_unchanged is None:
             skip_unchanged = self.DEFAULT_CONFIG.io.skip_unchanged
         if watermarks_enabled is None:
@@ -228,11 +234,11 @@ class PDFCleaner:
         if watermarks_max_pages is None:
             watermarks_max_pages = self.DEFAULT_CONFIG.watermarks.max_pages
         if save_linearize is None:
-            save_linearize = self.DEFAULT_CONFIG.save.linearize
+            save_linearize = save_config.linearize
         if save_garbage is None:
-            save_garbage = self.DEFAULT_CONFIG.save.garbage
+            save_garbage = save_config.garbage
         if save_deflate is None:
-            save_deflate = self.DEFAULT_CONFIG.save.deflate
+            save_deflate = save_config.deflate
         if processes is None:
             processes = _safe_process_count(self.DEFAULT_CONFIG.performance.processes)
         else:
@@ -281,6 +287,7 @@ class PDFCleaner:
         self.save_deflate = bool(save_deflate)
         self.processes = processes
         self.batch_size = batch_size
+        self.save_backend = get_save_backend(save_config)
         if not self.dry_run:
             self.output_dir.mkdir(parents=True, exist_ok=True)
         self._logger = logging.getLogger(__name__)
@@ -324,9 +331,7 @@ class PDFCleaner:
             watermarks_clip_bottom_mm=config.watermarks.clip_bottom_mm,
             watermarks_stop_after_first=config.watermarks.stop_after_first,
             watermarks_max_pages=config.watermarks.max_pages,
-            save_linearize=config.save.linearize,
-            save_garbage=config.save.garbage,
-            save_deflate=config.save.deflate,
+            save_config=config.save,
             dry_run=dry_run,
             processes=_safe_process_count(config.performance.processes),
             batch_size=config.performance.batch_size,
