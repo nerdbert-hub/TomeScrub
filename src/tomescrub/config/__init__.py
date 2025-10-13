@@ -19,6 +19,7 @@ from .loader import (
     env_to_dict,
     load_config,
     load_defaults,
+    load_profile,
 )
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "env_to_dict",
     "load_config",
     "load_defaults",
+    "load_profile",
 ]

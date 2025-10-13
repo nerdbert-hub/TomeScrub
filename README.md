@@ -34,7 +34,7 @@ The editable install registers `tomescrub` so you can invoke the CLI without adj
 ### Process a single file
 
 ```bash
-python -m tomescrub path/to/file.pdf --output-dir _processed
+python -m tomescrub --profile web path/to/file.pdf --output-dir _processed
 ```
 
 Need a detailed walkthrough? See `docs/USAGE.txt` for a step-by-step guide that covers
@@ -143,6 +143,8 @@ TomeScrub/
   - `watermarks.enabled`, `watermarks.scan_mode`, `watermarks.clip_bottom_mm`, `watermarks.stop_after_first`, `watermarks.max_pages`, `watermarks.rules`: tune watermark checks.
   - `performance.processes`, `performance.batch_size`: size the per-file worker pool. TomeScrub spins up a `ProcessPoolExecutor` so each worker opens PDFs independently (PyMuPDF objects stay process-local); batching limits how many documents are dispatched to the pool at a time.
   - `save.linearize`, `save.garbage`, `save.deflate`: match save-time performance/compatibility requirements.
+  - Profiles live under `configs/profiles/` (e.g. `fast`, `strict`, `web`). Select one with `--profile <name>` or the `TOMESCRUB__PROFILE` environment variable. The bundled `web` profile keeps metadata hygiene, targets 180 PPI imagery with JPX compression, forces PDF 1.7 output, and leaves linearisation off—ideal for online distribution.
+  - Profiles in `configs/profiles/` (e.g. `fast`, `strict`, `web`) encapsulate curated settings. Select one with `--profile <name>` (or `TOMESCRUB__PROFILE=<name>`). The bundled `web` profile targets 180 PPI imagery, uses JPX compression, forces PDF 1.7, and leaves linearisation off—ideal for online sharing.
 - Example configuration (`configs/example.toml`):
 
 ````

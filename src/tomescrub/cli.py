@@ -29,7 +29,7 @@ from rich.progress import (
 
 from .config import Config, load_config
 from .passwords import PasswordProvider, load_password_file
-from .processor import PDFCleaner, ProcessingEvent, RunStatistics
+from .processor import DocumentProcessingResult, PDFCleaner, ProcessingEvent, RunStatistics
 from .watermarks import find_watermark_matches
 
 FILE_COLUMN_WIDTH = 48
@@ -37,7 +37,7 @@ BAR_WIDTH = 20
 COUNT_COLUMN_WIDTH = 7
 ELAPSED_COLUMN_WIDTH = 8
 PAGES_COLUMN_WIDTH = 11
-STATE_COLUMN_WIDTH = 12
+SIZE_COLUMN_WIDTH = 32
 
 _STAGE_TIMING_FIELDS: tuple[tuple[str, str], ...] = (
     ("open", "open_ms"),
@@ -143,6 +143,11 @@ def _add_process_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Disable per-directory password hint lookups.",
     )
+    parser.add_argument(
+        "--profile",
+        type=str,
+        help="Configuration profile to apply (configs/profiles/<name>.toml).",
+    )
 
 
 def _add_config_only_arguments(parser: argparse.ArgumentParser) -> None:
@@ -158,6 +163,11 @@ def _add_config_only_arguments(parser: argparse.ArgumentParser) -> None:
         default=[],
         metavar="path=value",
         help="Override configuration values (e.g. --set clean.sanitize_metadata=false).",
+    )
+    parser.add_argument(
+        "--profile",
+        type=str,
+        help="Configuration profile to apply (configs/profiles/<name>.toml).",
     )
 
 
@@ -428,6 +438,13 @@ def _format_pages(count: Optional[int]) -> str:
     return f"{count:5d} pages"
 
 
+def _format_pages_info(result: Optional[DocumentProcessingResult], event_kind: str) -> str:
+    if result is None:
+        return "   -- pages"
+    delta = result.page_count if result.changed else 0
+    return f"{result.page_count} pages (Δ{delta})"
+
+
 def _format_size_delta(delta: int) -> str:
     """Render a human-readable size delta."""
     if delta == 0:
@@ -448,19 +465,18 @@ def _format_size_delta(delta: int) -> str:
     return f"{sign}{magnitude}{unit}"
 
 
-def _format_state_label(event: ProcessingEvent) -> str:
-    """Return a fixed-width label describing the current event state."""
-    detail = event.message or ""
-    if event.kind == "processed" and event.result is not None:
-        detail = "chg" if event.result.changed else "same"
-        size_fragment = _format_size_delta(event.result.size_delta_bytes)
-        base = f"{detail} {size_fragment}"
-    elif detail:
-        base = f"{event.kind}-{detail}"
-    else:
-        base = event.kind
-    base = base.replace("_", "-")
-    return base[:STATE_COLUMN_WIDTH].ljust(STATE_COLUMN_WIDTH)
+def _format_size_bytes(value: int) -> str:
+    units = ("B", "KB", "MB", "GB", "TB")
+    size = float(value)
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if abs(size) < 1024 or candidate == units[-1]:
+            break
+        size /= 1024
+    if unit == "B":
+        return f"{int(size)}B"
+    return f"{size:.2f}{unit}"
 
 
 def _build_bar(completed: int, total: Optional[int], width: int = BAR_WIDTH) -> str:
@@ -655,7 +671,8 @@ def _run_process_command(args: argparse.Namespace, *, dry_run: bool) -> int:
         return 2
 
     overrides = _collect_overrides(args)
-    config = load_config(args.config, overrides)
+    profile = getattr(args, "profile", None)
+    config = load_config(args.config, overrides, profile=profile)
 
     password_provider = _build_password_provider(config)
     cleaner = PDFCleaner.from_config(
@@ -713,10 +730,10 @@ def _execute_processing(
             TextColumn("{task.completed}/{task.total}" if task_total else "{task.completed}"),
             TimeElapsedColumn(),
             TimeRemainingColumn(),
+            TextColumn(f"| {{task.fields[step]:>{ELAPSED_COLUMN_WIDTH}}}", justify="right"),
+            TextColumn(f"| {{task.fields[pages]:<{PAGES_COLUMN_WIDTH + 8}}}", justify="left"),
+            TextColumn(f"| {{task.fields[size]:<{SIZE_COLUMN_WIDTH}}}", justify="left"),
             TextColumn(f"| {{task.fields[file]:<{FILE_COLUMN_WIDTH}}}", justify="left"),
-            TextColumn(f"| {{task.fields[elapsed]:>{ELAPSED_COLUMN_WIDTH}}}", justify="right"),
-            TextColumn(f"| {{task.fields[pages]:>{PAGES_COLUMN_WIDTH}}}", justify="right"),
-            TextColumn(f"| {{task.fields[state]:<{STATE_COLUMN_WIDTH}}}", justify="left"),
         )
 
         with Progress(*progress_columns, console=console, transient=True) as progress:
@@ -724,9 +741,9 @@ def _execute_processing(
                 "Cleaning PDFs",
                 total=task_total,
                 file="",
-                elapsed="",
+                step="",
                 pages="",
-                state="",
+                size="",
             )
 
             def handle_event(event: ProcessingEvent) -> None:
@@ -744,21 +761,31 @@ def _execute_processing(
 
                 result = event.result
                 step_time = result.elapsed if result else None
-                pages_value = result.page_count if result else None
-                pages_str = _format_pages(pages_value) if event.kind != "copied" else "   asset   "
+                pages_str = (
+                    _format_pages_info(result, event.kind)
+                    if event.kind == "processed"
+                    else ("asset" if event.kind == "copied" else "   -- pages")
+                )
                 filename = _truncate_middle(
                     _relative_path_for_display(event.source, display_base, prefer_name=prefer_name),
                     FILE_COLUMN_WIDTH,
                 )
-                state_label = _format_state_label(event)
+                if result is not None:
+                    size_info = (
+                        f"{_format_size_bytes(result.original_size_bytes)} -> "
+                        f"{_format_size_bytes(result.output_size_bytes)} "
+                        f"({_format_size_delta(result.size_delta_bytes)})"
+                    )
+                else:
+                    size_info = "--"
 
                 progress.update(
                     task_id,
                     fields={
                         "file": filename,
-                        "elapsed": _format_step_time(step_time),
+                        "step": _format_step_time(step_time),
                         "pages": pages_str,
-                        "state": state_label,
+                        "size": size_info,
                     },
                 )
                 if event.kind in {"processed", "skipped", "failed"}:
@@ -805,7 +832,8 @@ def _execute_processing(
                 status.update(f"{spinner} {label} | {_format_status_counts(stats)}")
                 console.print(
                     f"{spinner} {label:<17} | {bar} | {count_str:>{COUNT_COLUMN_WIDTH}} | {elapsed_str} | "
-                    f"{eta_str} | {_format_step_time(step_time)} | {pages_str:<11} | {filename} | {_format_status_counts(stats)}",
+                    f"{eta_str} | {_format_step_time(step_time)} | {pages_str:<{PAGES_COLUMN_WIDTH + 8}} | "
+                    f"{size_info:<{SIZE_COLUMN_WIDTH}} | {filename}",
                     highlight=False,
                 )
 
@@ -895,7 +923,7 @@ def _execute_processing(
             console.print(f"    - {display_path} | {reason}", highlight=False)
 
     processes_used = processes if use_parallel else 1
-    _write_run_log(
+    run_log_path = _write_run_log(
         console,
         config,
         cleaner,
@@ -907,6 +935,14 @@ def _execute_processing(
         batch_size,
         source,
     )
+    if config.io.run_log.enabled:
+        if not config.io.run_log.quiet:
+            if run_log_path is not None:
+                console.print(f"[dim]Run log: {run_log_path}[/dim]", highlight=False)
+            else:
+                console.print("[bold red]Failed to write run log[/bold red]", highlight=False)
+    else:
+        console.print("[dim]Run log disabled (enable with --run-log)[/dim]", highlight=False)
     return 0
 
 
@@ -920,7 +956,8 @@ def _run_rules_command(args: argparse.Namespace) -> int:
 def _run_rules_test_command(args: argparse.Namespace) -> int:
     console = Console()
     overrides = _collect_overrides(args)
-    config = load_config(args.config, overrides)
+    profile = getattr(args, "profile", None)
+    config = load_config(args.config, overrides, profile=profile)
     rules = config.compile_watermark_rules()
     if args.rule:
         requested = {name.lower() for name in args.rule}
@@ -1001,7 +1038,8 @@ def _run_rules_test_command(args: argparse.Namespace) -> int:
 def _run_print_config_command(args: argparse.Namespace) -> int:
     console = Console()
     overrides = _collect_overrides(args)
-    config = load_config(args.config, overrides)
+    profile = getattr(args, "profile", None)
+    config = load_config(args.config, overrides, profile=profile)
     console.print(json.dumps(config.model_dump(mode="json"), indent=2))
     return 0
 
@@ -1023,7 +1061,8 @@ def _resolve_run_log_path(config: Config, run_log_override: Optional[Path]) -> P
 def _run_stats_command(args: argparse.Namespace) -> int:
     console = Console()
     overrides = _collect_overrides(args)
-    config = load_config(args.config, overrides)
+    profile = getattr(args, "profile", None)
+    config = load_config(args.config, overrides, profile=profile)
     log_path = _resolve_run_log_path(config, args.run_log_path)
     if not log_path.exists():
         console.print(f"[bold red]Run log not found:[/bold red] {log_path}", highlight=False)

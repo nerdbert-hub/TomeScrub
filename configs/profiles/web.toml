@@ -1,0 +1,84 @@
+[io]
+output_dir = "_processed"
+overwrite_existing = true
+skip_unchanged = false
+
+[clean]
+sanitize_metadata = true
+strip_document_metadata = true
+strip_image_metadata = true
+remove_hidden_text = true
+hidden_text_alpha_threshold = 8
+extract_text = true
+
+[watermarks]
+enabled = true
+scan_mode = "bottom"
+clip_bottom_mm = 12.0
+stop_after_first = true
+max_pages = 5
+
+[performance]
+processes = "auto"
+batch_size = 4
+
+[save]
+backend = "chain"
+pdf_version = "1.7"
+linearize = false
+garbage = 4
+deflate = true
+
+  [save.fonts]
+  subset = true
+  embed_all = true
+  compress = true
+
+  [save.images]
+  threshold_factor = 1.5
+  color_target_ppi = 180
+  gray_target_ppi = 180
+  mono_target_ppi = 600
+  photo_compression = "jpx"
+  lineart_compression = "zip"
+
+    [save.images.jpeg]
+    qfactor = 0.08
+    h_samples = [2, 1, 1, 2]
+    v_samples = [2, 1, 1, 2]
+    blend = 1
+
+  [save.links]
+  preserve_links = true
+  preserve_bookmarks = true
+
+  [save.layers]
+  flatten_hidden = true
+  remove_ocg_metadata = true
+
+  [save.misc]
+  remove_thumbnails = true
+  fast_web_view = false
+  detect_duplicate_images = true
+  leave_color_unchanged = true
+
+  [save.ghostscript]
+  exe = ""
+  extra = ["-dPDFSETTINGS=/default"]
+
+  [save.qpdf]
+  exe = ""
+  extra = ["--object-streams=generate"]
+
+  [save.pikepdf]
+  enabled = true
+
+[passwords]
+default = ""
+hint_filename = "passwords.txt"
+password_file = ""
+
+[io.run_log]
+enabled = true
+path = "_processed/run_log.ndjson"
+quiet = false

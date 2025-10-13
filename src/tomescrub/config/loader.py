@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Optional
 
 import tomllib
 from platformdirs import user_config_dir
@@ -101,9 +101,32 @@ def parse_cli_overrides(entries: Iterable[str]) -> dict[str, Any]:
     return result
 
 
-def load_config(config_path: str | Path | None, cli_sets: Iterable[str]) -> Config:
+def _profiles_dir() -> Path:
+    return Path(__file__).resolve().parents[3] / "configs" / "profiles"
+
+
+def load_profile(name: str) -> dict[str, Any]:
+    profile = name.strip().lower()
+    profiles_dir = _profiles_dir()
+    candidate = profiles_dir / f"{profile}.toml"
+    if not candidate.exists():
+        raise FileNotFoundError(f"Profile '{profile}' not found at {candidate}")
+    return read_toml(candidate)
+
+
+def load_config(
+    config_path: str | Path | None,
+    cli_sets: Iterable[str],
+    *,
+    profile: Optional[str] = None,
+) -> Config:
     """Load configuration using the precedence rules."""
     merged = load_defaults()
+
+    profile_name = profile or os.environ.get(f"{ENV_PREFIX}PROFILE")
+    if profile_name:
+        merged = merge_dicts(merged, load_profile(profile_name))
+
     discovered = discover_config_path(config_path)
     if discovered:
         merged = merge_dicts(merged, read_toml(discovered))

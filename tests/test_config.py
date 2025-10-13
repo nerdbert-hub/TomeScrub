@@ -77,6 +77,21 @@ def test_load_config_env_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config_cli.io.run_log.quiet is True
 
 
+def test_profile_fast_applied() -> None:
+    config = load_config(config_path=None, cli_sets=[], profile="fast")
+    assert config.clean.sanitize_metadata is False
+    assert config.watermarks.rules[0].name == "order_reference"
+
+
+def test_profile_web_settings() -> None:
+    config = load_config(config_path=None, cli_sets=[], profile="web")
+    assert config.save.pdf_version == "1.7"
+    assert config.save.linearize is False
+    assert config.save.images.color_target_ppi == 180
+    assert config.save.images.gray_target_ppi == 180
+    assert config.save.images.photo_compression == "jpx"
+
+
 def test_save_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sanity check defaults for save configuration."""
     monkeypatch.delenv("TOMESCRUB__SAVE__BACKEND", raising=False)
