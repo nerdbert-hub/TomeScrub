@@ -89,6 +89,8 @@ class RunStatistics:
     failed: int = 0
     total_pages: int = 0
     total_elapsed: float = 0.0
+    total_original_size_bytes: int = 0
+    total_output_size_bytes: int = 0
     total_watermarks_removed: int = 0
     total_hidden_text_removed: int = 0
     total_image_metadata_cleared: int = 0
@@ -99,6 +101,8 @@ class RunStatistics:
     def add_result(self, result: DocumentProcessingResult) -> None:
         self.processed += 1
         self.total_pages += result.page_count
+        self.total_original_size_bytes += result.original_size_bytes
+        self.total_output_size_bytes += result.output_size_bytes
         self.total_watermarks_removed += result.watermarks_removed
         self.total_hidden_text_removed += result.hidden_text_removed
         self.total_image_metadata_cleared += result.image_metadata_cleared

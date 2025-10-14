@@ -1,17 +1,23 @@
 [io]
+# Mirror outputs into the shared processed folder for web delivery.
 output_dir = "_processed"
+# Overwrite existing files so reruns refresh published copies.
 overwrite_existing = true
+# Always write outputs; even unchanged files stay in sync.
 skip_unchanged = false
 
 [clean]
+# Enforce full metadata scrubbing for public distribution.
 sanitize_metadata = true
 strip_document_metadata = true
 strip_image_metadata = true
 remove_hidden_text = true
+# Slightly higher threshold to catch faint overlays common in PDFs.
 hidden_text_alpha_threshold = 8
 extract_text = true
 
 [watermarks]
+# Keep watermark removal active but focus on footer regions only.
 enabled = true
 scan_mode = "bottom"
 clip_bottom_mm = 12.0
@@ -19,66 +25,109 @@ stop_after_first = true
 max_pages = 5
 
 [performance]
+# Allow the worker pool to scale automatically while batching modestly.
 processes = "auto"
 batch_size = 4
 
 [save]
+# Chain backend applies PikePDF, Ghostscript, then qpdf polish.
 backend = "chain"
+# Emit PDFs compatible with modern viewers without forcing linearisation.
 pdf_version = "1.7"
 linearize = false
 garbage = 4
 deflate = true
 
-  [save.fonts]
-  subset = true
-  embed_all = true
-  compress = true
+[save.fonts]
+# Maintain complete font coverage while keeping subsets compact.
+subset = true
+embed_all = true
+compress = true
 
-  [save.images]
-  threshold_factor = 1.5
-  color_target_ppi = 180
-  gray_target_ppi = 180
-  mono_target_ppi = 600
-  photo_compression = "jpx"
-  lineart_compression = "zip"
+[save.images]
+# Downsample aggressively for web while preserving core quality.
+threshold_factor = 2.0
+color_target_ppi = 180
+gray_target_ppi = 180
+mono_target_ppi = 600
+photo_compression = "jpeg"
+lineart_compression = "zip"
 
-    [save.images.jpeg]
-    qfactor = 0.08
-    h_samples = [2, 1, 1, 2]
-    v_samples = [2, 1, 1, 2]
-    blend = 1
+[save.images.jpeg]
+# Favour high quality JPEG output with uniform sampling grids.
+qfactor = 0.85
+h_samples = [2, 2, 2, 2]
+v_samples = [2, 2, 2, 2]
+blend = 0
 
-  [save.links]
-  preserve_links = true
-  preserve_bookmarks = true
+[save.links]
+# Preserve hyperlinks and navigation aids for online reading.
+preserve_links = true
+preserve_bookmarks = true
 
-  [save.layers]
-  flatten_hidden = true
-  remove_ocg_metadata = true
+[save.layers]
+# Flatten hidden layers and strip OCG metadata to avoid leaks.
+flatten_hidden = true
+remove_ocg_metadata = true
 
-  [save.misc]
-  remove_thumbnails = true
-  fast_web_view = false
-  detect_duplicate_images = true
-  leave_color_unchanged = true
+[save.misc]
+# Remove thumbnails to trim size, keep colour treatment neutral.
+remove_thumbnails = true
+fast_web_view = false
+detect_duplicate_images = true
+leave_color_unchanged = true
 
-  [save.ghostscript]
-  exe = ""
-  extra = ["-dPDFSETTINGS=/default"]
+[save.qpdf]
+# Use the installed qpdf for final optimisation/linearisation toggles.
+exe = "C:\\Program Files\\qpdf 12.2.0\\bin\\qpdf.exe"
+extra = []
 
-  [save.qpdf]
-  exe = ""
-  extra = ["--object-streams=generate"]
+[save.pikepdf]
+# PikePDF provides layer cleanup before distillation.
+enabled = true
 
-  [save.pikepdf]
-  enabled = true
+[save.ghostscript]
+# Ghostscript pdfwrite handles resampling and distiller tweaks.
+enabled = true
+exe = "C:\\Program Files\\gs\\gs10.06.0\\bin\\gswin64c.exe"
+compatibility_level = "1.7"
+pass_through_jpeg_images = true
+pass_through_jpx_images = true
+max_inline_image_size = 2048
+extra = []
+
+[save.ghostscript.color]
+# Bicubic downsampling with Mitchell filter (threshold 2) for RGB.
+downsample = true
+downsample_type = "bicubic"
+downsample_threshold = 2.0
+auto_filter = false
+encode = true
+
+[save.ghostscript.gray]
+# Mirror colour handling for grayscale images.
+downsample = true
+downsample_type = "bicubic"
+downsample_threshold = 2.0
+auto_filter = false
+encode = true
+
+[save.ghostscript.mono]
+# Leave monochrome imagery untouched by default to avoid artefacts.
+downsample = false
+downsample_type = "subsample"
+downsample_threshold = 2.0
+auto_filter = false
+encode = true
 
 [passwords]
+# Keep empty defaults but honour per-directory hint files.
 default = ""
 hint_filename = "passwords.txt"
 password_file = ""
 
 [io.run_log]
+# Enable NDJSON run logging for operational visibility.
 enabled = true
 path = "_processed/run_log.ndjson"
 quiet = false

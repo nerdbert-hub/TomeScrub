@@ -192,9 +192,9 @@ class SaveConfig(BaseModel):
     links: "SaveLinksConfig" = Field(default_factory=lambda: SaveLinksConfig())
     layers: "SaveLayersConfig" = Field(default_factory=lambda: SaveLayersConfig())
     misc: "SaveMiscConfig" = Field(default_factory=lambda: SaveMiscConfig())
-    ghostscript: "SaveGhostscriptConfig" = Field(default_factory=lambda: SaveGhostscriptConfig())
     qpdf: "SaveQpdfConfig" = Field(default_factory=lambda: SaveQpdfConfig())
     pikepdf: "SavePikepdfConfig" = Field(default_factory=lambda: SavePikepdfConfig())
+    ghostscript: "SaveGhostscriptConfig" = Field(default_factory=lambda: SaveGhostscriptConfig())
 
     @field_validator("garbage")
     @classmethod
@@ -207,7 +207,7 @@ class SaveConfig(BaseModel):
     @classmethod
     def _normalise_backend(cls, value: Optional[str]) -> str:
         backend = (value or "pymupdf").strip().lower()
-        allowed = {"pymupdf", "ghostscript", "qpdf", "chain"}
+        allowed = {"pymupdf", "qpdf", "chain", "ghostscript"}
         if backend not in allowed:
             raise ValueError(f"save.backend must be one of {sorted(allowed)}")
         return backend
@@ -234,11 +234,11 @@ class SaveJPEGConfig(BaseModel):
 
 
 class SaveImagesConfig(BaseModel):
-    threshold_factor: float = 1.5
-    color_target_ppi: int = 300
-    gray_target_ppi: int = 300
+    threshold_factor: float = 2.0
+    color_target_ppi: int = 150
+    gray_target_ppi: int = 150
     mono_target_ppi: int = 600
-    photo_compression: Literal["jpeg", "jpx", "zip"] = "jpeg"
+    photo_compression: Literal["jpeg", "zip"] = "jpeg"
     lineart_compression: Literal["zip", "fax"] = "zip"
     jpeg: SaveJPEGConfig = Field(default_factory=SaveJPEGConfig)
 
@@ -258,6 +258,7 @@ class SaveLinksConfig(BaseModel):
 class SaveLayersConfig(BaseModel):
     flatten_hidden: bool = False
     remove_ocg_metadata: bool = False
+    preserve_layers: bool = True
 
 
 class SaveMiscConfig(BaseModel):
@@ -267,11 +268,6 @@ class SaveMiscConfig(BaseModel):
     leave_color_unchanged: bool = True
 
 
-class SaveGhostscriptConfig(BaseModel):
-    exe: str = ""
-    extra: List[str] = Field(default_factory=list)
-
-
 class SaveQpdfConfig(BaseModel):
     exe: str = ""
     extra: List[str] = Field(default_factory=list)
@@ -279,6 +275,65 @@ class SaveQpdfConfig(BaseModel):
 
 class SavePikepdfConfig(BaseModel):
     enabled: bool = False
+
+
+class GhostscriptChannelConfig(BaseModel):
+    """Per-channel controls for Ghostscript downsampling and encoding."""
+
+    downsample: bool = True
+    downsample_type: Literal["bicubic", "average", "subsample"] = "bicubic"
+    downsample_threshold: float = 2.0
+    auto_filter: Optional[bool] = None
+    encode: Optional[bool] = None
+
+    @field_validator("downsample_type", mode="before")
+    @classmethod
+    def _normalise_type(cls, value: str) -> str:
+        lowered = str(value).strip().lower()
+        if lowered not in {"bicubic", "average", "subsample"}:
+            raise ValueError("ghostscript downsample_type must be bicubic, average, or subsample")
+        return lowered
+
+    @field_validator("downsample_threshold")
+    @classmethod
+    def _validate_threshold(cls, value: float) -> float:
+        if value < 1.0:
+            raise ValueError("ghostscript downsample_threshold must be >= 1.0")
+        return value
+
+
+class SaveGhostscriptConfig(BaseModel):
+    """Ghostscript pdfwrite integration settings."""
+
+    enabled: bool = False
+    exe: str = ""
+    compatibility_level: str = "1.7"
+    pass_through_jpeg_images: Optional[bool] = True
+    pass_through_jpx_images: Optional[bool] = True
+    max_inline_image_size: int = 2048
+    color: GhostscriptChannelConfig = Field(default_factory=GhostscriptChannelConfig)
+    gray: GhostscriptChannelConfig = Field(default_factory=GhostscriptChannelConfig)
+    mono: GhostscriptChannelConfig = Field(
+        default_factory=lambda: GhostscriptChannelConfig(downsample=False, downsample_type="subsample")
+    )
+    extra: List[str] = Field(default_factory=list)
+
+    @field_validator("compatibility_level")
+    @classmethod
+    def _validate_compatibility(cls, value: str) -> str:
+        text = value.strip()
+        allowed = {"1.3", "1.4", "1.5", "1.6", "1.7", "2.0"}
+        if text not in allowed:
+            raise ValueError(f"ghostscript.compatibility_level must be one of {sorted(allowed)}")
+        return text
+
+    @field_validator("max_inline_image_size")
+    @classmethod
+    def _validate_inline_size(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("ghostscript.max_inline_image_size must be >= 0")
+        return value
+
 
 class Config(BaseModel):
     """Top-level TomeScrub configuration model."""

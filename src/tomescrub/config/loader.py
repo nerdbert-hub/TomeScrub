@@ -44,7 +44,7 @@ def discover_config_path(explicit: str | Path | None) -> Path | None:
 
 def load_defaults() -> dict[str, Any]:
     """Load project defaults bundled with the package."""
-    defaults_path = Path(__file__).parent / "defaults.toml"
+    defaults_path = _profiles_dir() / "defaults.toml"
     return read_toml(defaults_path)
 
 

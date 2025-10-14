@@ -4,18 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tomescrub"
-version = "0.4.0"
+version = "0.4.2"
 description = "TomeScrub utilities for cleaning PDF documents with PyMuPDF."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 authors = [
-    { name = "Pat", email = "pat_n@example.com" },
+    { name = "Nerdbert", email = "@_Nerdbert_" },
 ]
 dependencies = [
     "pymupdf>=1.24.0",
     "pydantic>=2.7",
     "platformdirs>=4.2",
     "rich>=13.7",
+    "pikepdf>=9.0",
 ]
 
 [project.optional-dependencies]

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import logging
 import os
@@ -53,6 +52,11 @@ _STAGE_SUMMARY_LABELS = {
     ms_key: stage.replace("_", " ")
     for stage, ms_key in _STAGE_TIMING_FIELDS
 }
+
+
+def _create_console() -> Console:
+    """Return a console configured for consistent Unicode output."""
+    return Console(legacy_windows=False, highlight=False, emoji=False)
 
 
 def _format_stage_timings_ms(step_timings: dict[str, float]) -> dict[str, float]:
@@ -359,6 +363,23 @@ def _format_summary(stats: RunStatistics) -> list[str]:
         lines.append(f"Images metadata cleared: {stats.total_image_metadata_cleared}")
     if stats.documents_metadata_cleared:
         lines.append(f"Documents metadata cleared: {stats.documents_metadata_cleared}")
+    if stats.processed:
+        total_delta = stats.total_output_size_bytes - stats.total_original_size_bytes
+        lines.append(
+            "Total size: "
+            f"{_format_size_bytes(stats.total_original_size_bytes)} -> "
+            f"{_format_size_bytes(stats.total_output_size_bytes)} "
+            f"({_format_size_delta(total_delta)})"
+        )
+        avg_input = int(round(stats.total_original_size_bytes / stats.processed))
+        avg_output = int(round(stats.total_output_size_bytes / stats.processed))
+        avg_delta = avg_output - avg_input
+        lines.append(
+            "Average per file: "
+            f"{_format_size_bytes(avg_input)} -> "
+            f"{_format_size_bytes(avg_output)} "
+            f"({_format_size_delta(avg_delta)})"
+        )
     lines.append(f"Elapsed: {stats.total_elapsed:.2f}s")
     return lines
 
@@ -515,6 +536,18 @@ def _stats_to_dict(stats: RunStatistics) -> dict[str, Any]:
         "changed": stats.changed,
         "total_pages": stats.total_pages,
         "total_elapsed": stats.total_elapsed,
+        "total_original_size_bytes": stats.total_original_size_bytes,
+        "total_output_size_bytes": stats.total_output_size_bytes,
+        "average_input_size_bytes": (
+            int(round(stats.total_original_size_bytes / stats.processed))
+            if stats.processed
+            else 0
+        ),
+        "average_output_size_bytes": (
+            int(round(stats.total_output_size_bytes / stats.processed))
+            if stats.processed
+            else 0
+        ),
         "total_watermarks_removed": stats.total_watermarks_removed,
         "total_hidden_text_removed": stats.total_hidden_text_removed,
         "total_image_metadata_cleared": stats.total_image_metadata_cleared,
@@ -664,7 +697,7 @@ def _worker_clean_task(args: tuple[dict[str, Any], str, str, bool]) -> tuple[str
 
 
 def _run_process_command(args: argparse.Namespace, *, dry_run: bool) -> int:
-    console = Console()
+    console = _create_console()
     source_path = args.source
     if not source_path.exists():
         console.print(f"[bold red]Source path not found:[/bold red] {source_path}", highlight=False)
@@ -717,7 +750,6 @@ def _execute_processing(
         console.print("[dim]Dry run: outputs will not be written.[/dim]", highlight=False)
     _print_legend(console, total_pdfs)
 
-    spinner_cycle = itertools.cycle(["|", "/", "-", "\\"])
     start_time = perf_counter()
     completed = 0
     task_total = total_pdfs if total_pdfs else None
@@ -751,13 +783,7 @@ def _execute_processing(
                 if event.kind in {"processed", "skipped", "failed"}:
                     completed += 1
 
-                spinner = next(spinner_cycle)
                 label = _label_for_event(event)
-                bar = _build_bar(completed, task_total)
-                count_str = _format_count(completed, task_total)
-                elapsed_total = perf_counter() - start_time
-                elapsed_str = _format_duration(elapsed_total)
-                eta_str = _format_eta(elapsed_total, completed, task_total)
 
                 result = event.result
                 step_time = result.elapsed if result else None
@@ -781,6 +807,7 @@ def _execute_processing(
 
                 progress.update(
                     task_id,
+                    description=label,
                     fields={
                         "file": filename,
                         "step": _format_step_time(step_time),
@@ -829,13 +856,6 @@ def _execute_processing(
                         highlight=False,
                     )
 
-                status.update(f"{spinner} {label} | {_format_status_counts(stats)}")
-                console.print(
-                    f"{spinner} {label:<17} | {bar} | {count_str:>{COUNT_COLUMN_WIDTH}} | {elapsed_str} | "
-                    f"{eta_str} | {_format_step_time(step_time)} | {pages_str:<{PAGES_COLUMN_WIDTH + 8}} | "
-                    f"{size_info:<{SIZE_COLUMN_WIDTH}} | {filename}",
-                    highlight=False,
-                )
 
             if not use_parallel:
                 for _ in cleaner.process_path(source, progress_callback=handle_event):
@@ -949,12 +969,12 @@ def _execute_processing(
 def _run_rules_command(args: argparse.Namespace) -> int:
     if args.rules_command == "test":
         return _run_rules_test_command(args)
-    Console().print(f"[bold red]Unknown rules subcommand:[/bold red] {args.rules_command}", highlight=False)
+    _create_console().print(f"[bold red]Unknown rules subcommand:[/bold red] {args.rules_command}", highlight=False)
     return 1
 
 
 def _run_rules_test_command(args: argparse.Namespace) -> int:
-    console = Console()
+    console = _create_console()
     overrides = _collect_overrides(args)
     profile = getattr(args, "profile", None)
     config = load_config(args.config, overrides, profile=profile)
@@ -1036,7 +1056,7 @@ def _run_rules_test_command(args: argparse.Namespace) -> int:
 
 
 def _run_print_config_command(args: argparse.Namespace) -> int:
-    console = Console()
+    console = _create_console()
     overrides = _collect_overrides(args)
     profile = getattr(args, "profile", None)
     config = load_config(args.config, overrides, profile=profile)
@@ -1059,7 +1079,7 @@ def _resolve_run_log_path(config: Config, run_log_override: Optional[Path]) -> P
 
 
 def _run_stats_command(args: argparse.Namespace) -> int:
-    console = Console()
+    console = _create_console()
     overrides = _collect_overrides(args)
     profile = getattr(args, "profile", None)
     config = load_config(args.config, overrides, profile=profile)

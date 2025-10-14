@@ -1,23 +1,34 @@
 TomeScrub Usage Guide
 =====================
 
-This document walks through the end-to-end workflow for running TomeScrub, explains how the
-configuration system works, and highlights the most important classes and functions. It is
-intended as a “verbose mode” reference—feel free to skim for the sections you need.
+This document walks through the end-to-end workflow for TomeScrub, explains how the
+configuration system behaves, and highlights the most important classes and functions.
+It is intended as a "verbose mode" reference -- feel free to skim for the sections you
+need.
 
 1. Environment Setup
 --------------------
 
-1.1 Create a virtual environment (optional but recommended):
-    > python -m venv .venv
-    > .\.venv\Scripts\activate
+1.1 Install external tools (optional):
+    - QPDF optimises object streams and linearises output PDFs:
+        * Windows: install from <https://qpdf.sourceforge.io/> (or `choco install qpdf`) and ensure
+          `qpdf.exe` is on `PATH` or configure `save.qpdf.exe`.
+        * macOS: `brew install qpdf`
+        * Linux (Debian/Ubuntu): `sudo apt install qpdf`
+      Verify with `qpdf --version`.
+    - Skip this step if you are happy with the PyMuPDF-only save pipeline. The bundled `web` profile uses QPDF when available to linearise output and enforce PDF version targets.
 
-1.2 Install dependencies and register TomeScrub in editable mode:
+1.2 Create a virtual environment (optional but recommended):
+    > python -m venv .venv
+    > .\.venv\Scripts\activate          (Windows PowerShell)
+    > source .venv/bin/activate         (POSIX shells)
+
+1.3 Install dependencies and register TomeScrub in editable mode:
     > pip install -r requirements.txt
     > python -m pip install --user -e .
 
-1.3 Run the test suite to confirm everything is wired correctly:
-    > python -m pytest
+1.4 Run a quick smoke test to confirm everything is wired correctly:
+    > python -m pytest tests/test_save_backends.py -k chain --maxfail=1
 
 2. Preparing Input Files
 ------------------------
@@ -44,13 +55,13 @@ intended as a “verbose mode” reference—feel free to skim for the sections 
     - Existing files will be overwritten unless you disable the option (see below).
 
 3.2 Add common CLI switches:
-    - `--output-dir OUTDIR`    → change the output mirror directory.
-    - `--keep-metadata`        → preserve document/image metadata.
-    - `--skip-existing`        → leave previously processed PDFs untouched.
-    - `--password SECRET`      → supply a global fallback password.
-    - `--password-file PATH`   → load a TOML-like password map (key=value per line).
-    - `--password-hints NAME`  → override the per-directory password hint filename.
-    - `--no-password-hints`    → disable directory hint discovery entirely.
+    - `--output-dir OUTDIR`    -> change the output mirror directory.
+    - `--keep-metadata`        -> preserve document/image metadata.
+    - `--skip-existing`        -> leave previously processed PDFs untouched.
+    - `--password SECRET`      -> supply a global fallback password.
+    - `--password-file PATH`   -> load a TOML-like password map (key=value per line).
+    - `--password-hints NAME`  -> override the per-directory password hint filename.
+    - `--no-password-hints`    -> disable directory hint discovery entirely.
 
 3.3 Configuration layering:
     - TomeScrub merges settings from bundled defaults, config files, environment
@@ -66,7 +77,7 @@ intended as a “verbose mode” reference—feel free to skim for the sections 
 4. Understanding the Configuration Model
 ----------------------------------------
 
-4.1 The `Config` Pydantic model (src/tomescrub/config/schema.py):
+4.1 The `Config` Pydantic model (`src/tomescrub/config/schema.py`):
     - `io`: output directory and overwrite policy.
     - `clean`: metadata scrubbing and hidden text threshold.
     - `passwords`: default password, hint filename, and optional mapping file.
@@ -88,7 +99,7 @@ intended as a “verbose mode” reference—feel free to skim for the sections 
 5. Core Components
 ------------------
 
-5.1 `PDFCleaner` (src/tomescrub/processor.py):
+5.1 `PDFCleaner` (`src/tomescrub/processor.py`):
     - `process_path(source)` recursively mirrors folders, cleans PDFs, and copies
       non-PDF assets.
     - `clean_document(pdf_path)` performs the actual cleaning:
@@ -97,12 +108,12 @@ intended as a “verbose mode” reference—feel free to skim for the sections 
           * Clears metadata and hidden text based on configuration.
           * Returns a `DocumentProcessingResult` with rich metadata.
 
-5.2 `PasswordProvider` (src/tomescrub/passwords.py):
+5.2 `PasswordProvider` (`src/tomescrub/passwords.py`):
     - Resolves passwords using explicit mappings, per-directory hints, and a global
       default.
     - Customize by subclassing or providing a callable `password_resolver`.
 
-5.3 `WatermarkRule` & `remove_watermarks` (src/tomescrub/watermarks.py):
+5.3 `WatermarkRule` and `remove_watermarks` (`src/tomescrub/watermarks.py`):
     - Rules match textual footers via regex, font size constraints, and distance from
       the page bottom.
     - Extend by adding more entries to your configuration TOML.
@@ -122,8 +133,8 @@ intended as a “verbose mode” reference—feel free to skim for the sections 
       `watermarks_removed`, and `document_metadata_cleared`. Ideal for instrumentation
       or downstream automation.
 
-7. Troubleshooting & Tips
--------------------------
+7. Troubleshooting and Tips
+---------------------------
 
 7.1 Password issues:
     - Ensure passwords in hint files are trimmed (the loader does this automatically).
@@ -142,8 +153,8 @@ intended as a “verbose mode” reference—feel free to skim for the sections 
 
 7.5 Verbose debug:
     - Wrap calls in your own script and log each `DocumentProcessingResult`.
-    - Consider integrating Python’s `logging` module for persistent trace files.
+    - Consider integrating Python's `logging` module for persistent trace files.
 
 This guide will evolve with the project. For GitHub users, feel free to link to this file
-from README.md or doc tooling of choice. For questions not covered here, the source
-modules contain inline docstrings that describe the underlying logic in more detail.
+from `README.md` or your documentation tooling of choice. When in doubt, inspect the source
+modules and inline docstrings for the most up-to-date behaviour.

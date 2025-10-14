@@ -89,7 +89,10 @@ def test_profile_web_settings() -> None:
     assert config.save.linearize is False
     assert config.save.images.color_target_ppi == 180
     assert config.save.images.gray_target_ppi == 180
-    assert config.save.images.photo_compression == "jpx"
+    assert config.save.images.photo_compression == "jpeg"
+    assert config.save.ghostscript.enabled is True
+    assert config.save.ghostscript.pass_through_jpeg_images is True
+    assert config.save.ghostscript.max_inline_image_size == 2048
 
 
 def test_save_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,20 +104,26 @@ def test_save_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert save.linearize is False
     assert save.pdf_version is None
     assert save.fonts.subset is True
-    assert save.images.threshold_factor == 1.5
+    assert save.images.threshold_factor == 2.0
+    assert save.images.color_target_ppi == 150
+    assert save.images.gray_target_ppi == 150
     assert save.images.jpeg.qfactor == pytest.approx(0.08)
     assert save.links.preserve_links is True
     assert save.misc.detect_duplicate_images is True
+    assert save.ghostscript.compatibility_level == "1.7"
+    assert save.ghostscript.pass_through_jpeg_images is True
+    assert save.ghostscript.max_inline_image_size == 2048
+    assert save.ghostscript.enabled is False
 
 
 def test_save_backend_cli_override(monkeypatch: pytest.MonkeyPatch) -> None:
     """CLI overrides should update nested save configuration."""
     overrides = [
-        "save.backend=ghostscript",
+        "save.backend=qpdf",
         "save.fonts.subset=false",
-        "save.images.photo_compression=jpx",
+        "save.images.photo_compression=zip",
     ]
     config = load_config(config_path=None, cli_sets=overrides)
-    assert config.save.backend == "ghostscript"
+    assert config.save.backend == "qpdf"
     assert config.save.fonts.subset is False
-    assert config.save.images.photo_compression == "jpx"
+    assert config.save.images.photo_compression == "zip"

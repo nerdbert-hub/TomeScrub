@@ -18,6 +18,51 @@ Tooling scaffold for cleaning PDF documents with [PyMuPDF](https://pymupdf.readt
 - Pytest harness seeded with regression tests for the core behaviours.
 - Rich `DocumentProcessingResult` metadata (original vs cleaned permissions, encryption flag, extracted text).
 
+## Prerequisites
+TomeScrub works out of the box with PyMuPDF. For the bundled "web" profile we recommend adding QPDF so
+
+1. **QPDF** (optional, but recommended for the `web` profile)
+   - **Windows:** install from <https://qpdf.sourceforge.io/> (or `choco install qpdf`), then ensure `qpdf.exe` is on `PATH` or set `save.qpdf.exe`.
+   - **macOS:** `brew install qpdf`
+   - **Linux:** `sudo apt install qpdf`
+   - Verify with `qpdf --version`.
+
+
+If QPDF is unavailable TomeScrub simply writes the PyMuPDF output and skips the linearisation step.
+
+## Step-by-Step Setup
+
+Follow these steps on a fresh machine:
+
+1. Install Python 3.11 or newer and ensure `python` (or `py`) resolves on your shell `PATH`.
+2. Clone this repository (or download a release ZIP) and open a terminal in the project root.
+3. (Recommended) Create and activate a virtual environment:
+   ```bash
+   python -m venv .venv
+   .venv\Scripts\activate  # Windows PowerShell
+   source .venv/bin/activate  # POSIX shells
+   ```
+4. Install the Python dependencies and register TomeScrub in editable mode:
+   ```bash
+   pip install -r requirements.txt
+   python -m pip install --user -e .
+   ```
+5. (Optional) Install QPDF using the instructions above, then confirm with:
+   ```bash
+   qpdf --version
+   ```
+   For portable installs you can point the config at an explicit executable with
+   `--set save.qpdf.exe="C:/path/to/qpdf.exe"`.
+6. Run a quick smoke test to make sure everything is wired correctly:
+   ```bash
+   python -m pytest tests/test_save_backends.py -k chain --maxfail=1
+   ```
+7. Process a sample file or directory:
+   ```bash
+   python -m tomescrub _unprocessed --output-dir _processed
+   ```
+   Replace `_unprocessed` with your input folder. TomeScrub creates `_processed` on first use.
+
 ## Getting Started
 
 ```bash
@@ -143,8 +188,8 @@ TomeScrub/
   - `watermarks.enabled`, `watermarks.scan_mode`, `watermarks.clip_bottom_mm`, `watermarks.stop_after_first`, `watermarks.max_pages`, `watermarks.rules`: tune watermark checks.
   - `performance.processes`, `performance.batch_size`: size the per-file worker pool. TomeScrub spins up a `ProcessPoolExecutor` so each worker opens PDFs independently (PyMuPDF objects stay process-local); batching limits how many documents are dispatched to the pool at a time.
   - `save.linearize`, `save.garbage`, `save.deflate`: match save-time performance/compatibility requirements.
-  - Profiles live under `configs/profiles/` (e.g. `fast`, `strict`, `web`). Select one with `--profile <name>` or the `TOMESCRUB__PROFILE` environment variable. The bundled `web` profile keeps metadata hygiene, targets 180 PPI imagery with JPX compression, forces PDF 1.7 output, and leaves linearisation off—ideal for online distribution.
-  - Profiles in `configs/profiles/` (e.g. `fast`, `strict`, `web`) encapsulate curated settings. Select one with `--profile <name>` (or `TOMESCRUB__PROFILE=<name>`). The bundled `web` profile targets 180 PPI imagery, uses JPX compression, forces PDF 1.7, and leaves linearisation off—ideal for online sharing.
+  - Profiles live under `configs/profiles/` (e.g. `fast`, `strict`, `web`). Select one with `--profile <name>` or the `TOMESCRUB__PROFILE` environment variable. The bundled `web` profile keeps metadata hygiene, targets 180 PPI imagery with high-quality JPEG compression, forces PDF 1.7 output, and leaves linearisation off--ideal for online distribution.
+  - Profiles in `configs/profiles/` (e.g. `fast`, `strict`, `web`) encapsulate curated settings. Select one with `--profile <name>` (or `TOMESCRUB__PROFILE=<name>`). The bundled `web` profile targets 180 PPI imagery, uses JPEG compression, forces PDF 1.7, and leaves linearisation off--ideal for online sharing.
 - Example configuration (`configs/example.toml`):
 
 ````
